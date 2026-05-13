@@ -14,6 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
 
 add_executable(KosmosRenderer
     src/main.cpp
@@ -37,6 +38,7 @@ target_link_libraries(KosmosRenderer
     PRIVATE
         Vulkan::Vulkan
         glfw
+        glm::glm
 )
 
 target_compile_definitions(KosmosRenderer

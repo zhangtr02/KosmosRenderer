@@ -28,7 +28,7 @@ void FlyCameraController::Update(platform::Window& window, scene::Camera& camera
     lastCursorY_ = cursor.y;
     hasLastCursor_ = true;
 
-    scene::Vec3 localMovement{};
+    glm::vec3 localMovement{};
     if (window.IsKeyPressed(platform::Key::W))
     {
         localMovement.z += 1.0f;

@@ -2,6 +2,8 @@
 
 #include "Scene/Camera.h"
 
+#include <glm/vec3.hpp>
+
 #include <string>
 #include <vector>
 
@@ -17,14 +19,14 @@ struct Color
 
 struct Transform
 {
-    Vec3 translation{};
-    Vec3 rotationDegrees{};
-    Vec3 scale{1.0f, 1.0f, 1.0f};
+    glm::vec3 translation{};
+    glm::vec3 rotationDegrees{};
+    glm::vec3 scale{1.0f, 1.0f, 1.0f};
 };
 
 struct DirectionalLight
 {
-    Vec3 direction{-0.5f, -1.0f, -0.25f};
+    glm::vec3 direction{-0.5f, -1.0f, -0.25f};
     Color color{1.0f, 0.96f, 0.88f, 1.0f};
     float intensity = 4.0f;
 };

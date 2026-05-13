@@ -9,17 +9,17 @@ Scene Scene::CreateDemoScene()
     Scene scene;
     scene.meshInstances_.push_back(MeshInstance{
         "DemoCube_Primary",
-        Transform{Vec3{-1.5f, 0.0f, 0.0f}, Vec3{}, Vec3{1.0f, 1.0f, 1.0f}},
+        Transform{glm::vec3{-1.5f, 0.0f, 0.0f}, glm::vec3{}, glm::vec3{1.0f, 1.0f, 1.0f}},
         Material{"BrushedDarkMetal", Color{0.45f, 0.48f, 0.52f, 1.0f}, 0.8f, 0.34f},
     });
     scene.meshInstances_.push_back(MeshInstance{
         "DemoCube_Ceramic",
-        Transform{Vec3{1.5f, 0.0f, 0.0f}, Vec3{}, Vec3{1.0f, 1.0f, 1.0f}},
+        Transform{glm::vec3{1.5f, 0.0f, 0.0f}, glm::vec3{}, glm::vec3{1.0f, 1.0f, 1.0f}},
         Material{"WarmCeramic", Color{0.85f, 0.72f, 0.58f, 1.0f}, 0.0f, 0.62f},
     });
     scene.meshInstances_.push_back(MeshInstance{
         "DemoFloor",
-        Transform{Vec3{0.0f, -1.1f, 0.0f}, Vec3{}, Vec3{6.0f, 0.1f, 6.0f}},
+        Transform{glm::vec3{0.0f, -1.1f, 0.0f}, glm::vec3{}, glm::vec3{6.0f, 0.1f, 6.0f}},
         Material{"MatteFloor", Color{0.28f, 0.32f, 0.36f, 1.0f}, 0.0f, 0.85f},
     });
     return scene;

@@ -6,6 +6,7 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 
 - C++20 + CMake 项目结构。
 - GLFW 窗口、输入处理和 Vulkan surface 创建。
+- glm 数学库，当前用于相机和场景向量数据。
 - Vulkan instance、debug messenger、physical device、logical device 初始化。
 - Swapchain、image view、render pass、framebuffer 创建与 resize 重建。
 - Command buffer、semaphore、fence 基础同步流程。
@@ -21,10 +22,11 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 - Vulkan SDK
 - vcpkg
 
-安装 GLFW：
+安装依赖：
 
 ```powershell
 .\vcpkg.exe install glfw3:x64-windows
+.\vcpkg.exe install glm:x64-windows
 ```
 
 ## 构建与运行

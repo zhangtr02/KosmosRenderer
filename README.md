@@ -6,12 +6,13 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 
 - C++20 + CMake 项目结构。
 - GLFW 窗口、输入处理和 Vulkan surface 创建。
-- glm 数学库，当前用于相机和场景向量数据。
+- glm 数学库，当前用于相机、场景向量和 MVP 矩阵计算。
 - HLSL shader 编译到 SPIR-V，并创建 Vulkan graphics pipeline。
 - Vulkan instance、debug messenger、physical device、logical device 初始化。
-- Swapchain、image view、dynamic rendering pipeline 创建与 resize 重建。
+- Swapchain、image view、depth image、dynamic rendering pipeline 创建与 resize 重建。
 - Command buffer、semaphore、fence 基础同步流程。
-- 使用 `vkCmdDraw` 绘制一个彩色三角形。
+- 使用 staging buffer 上传 vertex buffer / index buffer，并通过 push constant 绘制多个彩色 cube。
+- 每个 cube 从 `Scene` 读取独立 transform 和材质颜色。
 - 简单 `Renderer` 接口，预留未来接入 KosmosEngine 的边界。
 - 基础 `Scene` / `Camera` 数据结构和 fly camera 控制。
 

@@ -51,20 +51,46 @@ private:
     void CreateLogicalDevice();
     void CreateSwapchain();
     void CreateImageViews();
+    void CreateDepthResources();
     void CreateGraphicsPipeline();
+    void CreateMeshBuffers();
     void CreateCommandPool();
     void CreateCommandBuffers();
     void CreateSyncObjects();
     void CreateSwapchainSyncObjects();
 
     void CleanupGraphicsPipeline();
+    void CleanupMeshBuffers();
+    void CleanupDepthResources();
     void CleanupSwapchainSyncObjects();
     void CleanupSwapchain();
     void RecreateSwapchain();
-    void RecordTrianglePass(VkCommandBuffer commandBuffer, std::uint32_t imageIndex, VkClearColorValue clearColor);
+    void RecordCubePass(VkCommandBuffer commandBuffer,
+                        std::uint32_t imageIndex,
+                        const scene::Scene& scene,
+                        VkClearColorValue clearColor);
     void TransitionSwapchainImageLayout(VkCommandBuffer commandBuffer, std::uint32_t imageIndex, VkImageLayout newLayout);
+    void TransitionDepthImageLayout(VkCommandBuffer commandBuffer, VkImageLayout newLayout);
+    VkCommandBuffer BeginSingleTimeCommands() const;
+    void EndSingleTimeCommands(VkCommandBuffer commandBuffer) const;
+    void CopyBuffer(VkBuffer sourceBuffer, VkBuffer destinationBuffer, VkDeviceSize size) const;
 
     VkShaderModule CreateShaderModule(const std::vector<std::uint32_t>& code) const;
+    void CreateBuffer(VkDeviceSize size,
+                      VkBufferUsageFlags usage,
+                      VkMemoryPropertyFlags properties,
+                      VkBuffer& buffer,
+                      VkDeviceMemory& bufferMemory) const;
+    void CreateImage(std::uint32_t width,
+                     std::uint32_t height,
+                     VkFormat format,
+                     VkImageTiling tiling,
+                     VkImageUsageFlags usage,
+                     VkMemoryPropertyFlags properties,
+                     VkImage& image,
+                     VkDeviceMemory& imageMemory) const;
+    VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags) const;
+    std::uint32_t FindMemoryType(std::uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
 
     QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device) const;
     SwapchainSupportDetails QuerySwapchainSupport(VkPhysicalDevice device) const;
@@ -98,6 +124,18 @@ private:
     VkExtent2D swapchainExtent_{};
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
+
+    VkFormat depthFormat_ = VK_FORMAT_D32_SFLOAT;
+    VkImage depthImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory depthImageMemory_ = VK_NULL_HANDLE;
+    VkImageView depthImageView_ = VK_NULL_HANDLE;
+    VkImageLayout depthImageLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory vertexBufferMemory_ = VK_NULL_HANDLE;
+    VkBuffer indexBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory indexBufferMemory_ = VK_NULL_HANDLE;
+    std::uint32_t indexCount_ = 0;
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;

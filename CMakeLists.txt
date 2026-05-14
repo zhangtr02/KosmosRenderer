@@ -46,8 +46,8 @@ function(kosmos_compile_shader shader_source shader_profile shader_output_name)
     set(KOSMOS_SHADER_OUTPUTS "${KOSMOS_SHADER_OUTPUTS};${shader_output}" PARENT_SCOPE)
 endfunction()
 
-kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/triangle.vert.hlsl" vs_6_0 "triangle.vert.spv")
-kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/triangle.frag.hlsl" ps_6_0 "triangle.frag.spv")
+kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/mesh.vert.hlsl" vs_6_0 "mesh.vert.spv")
+kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/mesh.frag.hlsl" ps_6_0 "mesh.frag.spv")
 
 add_executable(KosmosRenderer
     src/main.cpp

@@ -32,5 +32,12 @@ void Scene::Update(float deltaSeconds)
     clearColor_.r = 0.012f + pulse * 0.01f;
     clearColor_.g = 0.020f + pulse * 0.01f;
     clearColor_.b = 0.040f + pulse * 0.015f;
+
+    if (meshInstances_.size() >= 2)
+    {
+        meshInstances_[0].transform.rotationDegrees.y = elapsedSeconds_ * 35.0f;
+        meshInstances_[1].transform.rotationDegrees.x = std::sin(elapsedSeconds_) * 12.0f;
+        meshInstances_[1].transform.rotationDegrees.z = elapsedSeconds_ * -20.0f;
+    }
 }
 }

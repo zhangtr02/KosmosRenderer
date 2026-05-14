@@ -51,17 +51,20 @@ private:
     void CreateLogicalDevice();
     void CreateSwapchain();
     void CreateImageViews();
-    void CreateRenderPass();
-    void CreateFramebuffers();
+    void CreateGraphicsPipeline();
     void CreateCommandPool();
     void CreateCommandBuffers();
     void CreateSyncObjects();
     void CreateSwapchainSyncObjects();
 
+    void CleanupGraphicsPipeline();
     void CleanupSwapchainSyncObjects();
     void CleanupSwapchain();
     void RecreateSwapchain();
-    void RecordClearPass(VkCommandBuffer commandBuffer, std::uint32_t imageIndex, VkClearColorValue clearColor);
+    void RecordTrianglePass(VkCommandBuffer commandBuffer, std::uint32_t imageIndex, VkClearColorValue clearColor);
+    void TransitionSwapchainImageLayout(VkCommandBuffer commandBuffer, std::uint32_t imageIndex, VkImageLayout newLayout);
+
+    VkShaderModule CreateShaderModule(const std::vector<std::uint32_t>& code) const;
 
     QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device) const;
     SwapchainSupportDetails QuerySwapchainSupport(VkPhysicalDevice device) const;
@@ -90,10 +93,11 @@ private:
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     std::vector<VkImage> swapchainImages_;
     std::vector<VkImageView> swapchainImageViews_;
-    std::vector<VkFramebuffer> swapchainFramebuffers_;
+    std::vector<VkImageLayout> swapchainImageLayouts_;
     VkFormat swapchainImageFormat_ = VK_FORMAT_UNDEFINED;
     VkExtent2D swapchainExtent_{};
-    VkRenderPass renderPass_ = VK_NULL_HANDLE;
+    VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
+    VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;

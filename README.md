@@ -7,12 +7,13 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 - C++20 + CMake 项目结构。
 - GLFW 窗口、输入处理和 Vulkan surface 创建。
 - glm 数学库，当前用于相机和场景向量数据。
+- HLSL shader 编译到 SPIR-V，并创建 Vulkan graphics pipeline。
 - Vulkan instance、debug messenger、physical device、logical device 初始化。
-- Swapchain、image view、render pass、framebuffer 创建与 resize 重建。
+- Swapchain、image view、dynamic rendering pipeline 创建与 resize 重建。
 - Command buffer、semaphore、fence 基础同步流程。
+- 使用 `vkCmdDraw` 绘制一个彩色三角形。
 - 简单 `Renderer` 接口，预留未来接入 KosmosEngine 的边界。
 - 基础 `Scene` / `Camera` 数据结构和 fly camera 控制。
-- 当前画面是 Vulkan render pass 清屏，用于验证窗口、swapchain、同步和 resize 流程。
 
 ## 环境要求
 
@@ -20,6 +21,7 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 - CMake 3.24+
 - 支持 C++20 的 MSVC
 - Vulkan SDK
+- 支持 Vulkan 1.3 dynamic rendering 的 GPU 与驱动
 - vcpkg
 
 安装依赖：
@@ -29,13 +31,15 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 .\vcpkg.exe install glm:x64-windows
 ```
 
+shader 编译依赖 Vulkan SDK 自带的 `dxc`。
+
 ## 构建与运行
 
 在项目根目录执行：
 
 ```powershell
 cmake -S . -B build `
-  -DCMAKE_TOOLCHAIN_FILE="C:/Dev/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
   -DKOSMOS_ENABLE_VALIDATION=ON
 
 cmake --build build --config Debug

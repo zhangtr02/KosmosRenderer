@@ -15,6 +15,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_path(TINYGLTF_INCLUDE_DIRS "tiny_gltf.h" REQUIRED)
 
@@ -51,6 +52,8 @@ endfunction()
 kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/mesh.vert.hlsl" vs_6_0 "mesh.vert.spv")
 kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/mesh.frag.hlsl" ps_6_0 "mesh.frag.spv")
 kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/shadow.vert.hlsl" vs_6_0 "shadow.vert.spv")
+kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/fullscreen.vert.hlsl" vs_6_0 "fullscreen.vert.spv")
+kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/post.frag.hlsl" ps_6_0 "post.frag.spv")
 
 add_executable(KosmosRenderer
     src/main.cpp
@@ -80,6 +83,7 @@ target_link_libraries(KosmosRenderer
         Vulkan::Vulkan
         glfw
         glm::glm
+        imgui::imgui
 )
 
 target_compile_definitions(KosmosRenderer

@@ -16,7 +16,9 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 - 支持 Vulkan descriptor set 按材质绑定 base color、metallic-roughness、normal 三张 sampled image 和 sampler。
 - shader 支持基础 metallic-roughness PBR、directional light 和 normal map。
 - 支持 directional light shadow map，并在主渲染 pass 中采样阴影。
+- 支持离屏 scene color、后处理 tone mapping / gamma correction。
 - 支持渲染调试模式：Lit、Albedo、Normal、Roughness、Metallic、Shadow。
+- Dear ImGui 调试面板：render mode、exposure、gamma、shadow map preview、CPU/GPU frame time。
 - 简单 `Renderer` 接口，预留未来接入 KosmosEngine 的边界。
 - 基础 `Scene` / `Camera` 数据结构和 fly camera 控制。
 
@@ -36,6 +38,7 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 .\vcpkg.exe install glm:x64-windows
 .\vcpkg.exe install tinygltf:x64-windows
 .\vcpkg.exe install stb:x64-windows
+.\vcpkg.exe install "imgui[glfw-binding,vulkan-binding]:x64-windows"
 ```
 
 shader 编译依赖 Vulkan SDK 自带的 `dxc`。
@@ -91,4 +94,5 @@ cmake --build build --config Debug
 - `4`：Roughness 调试模式。
 - `5`：Metallic 调试模式。
 - `6`：Shadow 调试模式。
+- ImGui 面板：切换 render mode，调节 exposure / gamma，查看 shadow map 和帧时间。
 - `Esc`：退出程序。

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +28,9 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
 
 namespace kosmos::renderer
 {
@@ -57,11 +61,24 @@ struct PushConstants
 
 static_assert(sizeof(PushConstants) <= 256, "Push constants should stay within the common Vulkan 256-byte limit.");
 
+struct PostProcessPushConstants
+{
+    glm::vec4 postParams{1.0f, 2.2f, 0.0f, 0.0f};
+};
+
 void Check(VkResult result, const char* message)
 {
     if (result != VK_SUCCESS)
     {
         throw std::runtime_error(message);
+    }
+}
+
+void CheckImGuiVkResult(VkResult result)
+{
+    if (result != VK_SUCCESS)
+    {
+        std::cerr << "Dear ImGui Vulkan error: " << result << '\n';
     }
 }
 
@@ -109,6 +126,46 @@ glm::mat4 BuildModelMatrix(const scene::Transform& transform)
 glm::vec4 ToVec4(const scene::Color& color)
 {
     return glm::vec4{color.r, color.g, color.b, color.a};
+}
+
+const char* DebugRenderModeName(DebugRenderMode mode)
+{
+    switch (mode)
+    {
+    case DebugRenderMode::Lit:
+        return "Lit";
+    case DebugRenderMode::Albedo:
+        return "Albedo";
+    case DebugRenderMode::Normal:
+        return "Normal";
+    case DebugRenderMode::Roughness:
+        return "Roughness";
+    case DebugRenderMode::Metallic:
+        return "Metallic";
+    case DebugRenderMode::Shadow:
+        return "Shadow";
+    }
+
+    return "Lit";
+}
+
+DebugRenderMode DebugRenderModeFromIndex(int index)
+{
+    switch (index)
+    {
+    case 1:
+        return DebugRenderMode::Albedo;
+    case 2:
+        return DebugRenderMode::Normal;
+    case 3:
+        return DebugRenderMode::Roughness;
+    case 4:
+        return DebugRenderMode::Metallic;
+    case 5:
+        return DebugRenderMode::Shadow;
+    default:
+        return DebugRenderMode::Lit;
+    }
 }
 
 glm::mat4 BuildLightViewProjection(const scene::DirectionalLight& light)
@@ -208,6 +265,11 @@ VulkanRenderer::~VulkanRenderer()
     Shutdown();
 }
 
+std::unique_ptr<Renderer> CreateVulkanRenderer()
+{
+    return std::make_unique<VulkanRenderer>();
+}
+
 void VulkanRenderer::Initialize(platform::Window& window, const RendererConfig& config)
 {
     if (initialized_)
@@ -231,13 +293,19 @@ void VulkanRenderer::Initialize(platform::Window& window, const RendererConfig& 
     CreateSwapchain();
     CreateImageViews();
     CreateDepthResources();
+    CreateSceneColorResources();
     CreateShadowResources();
     CreateDescriptorSetLayout();
+    CreatePostProcessDescriptorSetLayout();
     CreateGraphicsPipeline();
     CreateShadowPipeline();
+    CreatePostProcessPipeline();
+    CreatePostProcessResources();
     CreateCommandPool();
     CreateCommandBuffers();
+    CreateTimingResources();
     CreateSyncObjects();
+    InitializeImGui();
 
     initialized_ = true;
 }
@@ -259,8 +327,28 @@ bool VulkanRenderer::BeginFrame()
         return false;
     }
 
+    cpuFrameStart_ = std::chrono::steady_clock::now();
+
     Check(vkWaitForFences(device_, 1, &inFlightFences_[currentFrame_], VK_TRUE, std::numeric_limits<std::uint64_t>::max()),
           "Failed to wait for frame fence.");
+
+    if (gpuTimestampsSupported_ && timestampFrameReady_[currentFrame_])
+    {
+        std::array<std::uint64_t, 2> timestamps{};
+        const VkResult queryResult = vkGetQueryPoolResults(device_,
+                                                           timestampQueryPool_,
+                                                           static_cast<std::uint32_t>(currentFrame_ * 2),
+                                                           2,
+                                                           sizeof(std::uint64_t) * timestamps.size(),
+                                                           timestamps.data(),
+                                                           sizeof(std::uint64_t),
+                                                           VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+        if (queryResult == VK_SUCCESS && timestamps[1] > timestamps[0])
+        {
+            lastGpuFrameMs_ = static_cast<float>(static_cast<double>(timestamps[1] - timestamps[0]) *
+                                                 static_cast<double>(timestampPeriod_) / 1000000.0);
+        }
+    }
 
     const VkResult acquireResult = vkAcquireNextImageKHR(device_,
                                                          swapchain_,
@@ -294,6 +382,14 @@ bool VulkanRenderer::BeginFrame()
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     Check(vkBeginCommandBuffer(commandBuffers_[currentFrame_], &beginInfo), "Failed to begin command buffer.");
 
+    if (gpuTimestampsSupported_)
+    {
+        const std::uint32_t queryIndex = static_cast<std::uint32_t>(currentFrame_ * 2);
+        vkCmdResetQueryPool(commandBuffers_[currentFrame_], timestampQueryPool_, queryIndex, 2);
+        vkCmdWriteTimestamp(commandBuffers_[currentFrame_], VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampQueryPool_, queryIndex);
+        timestampFrameReady_[currentFrame_] = true;
+    }
+
     frameStarted_ = true;
     clearRecorded_ = false;
     return true;
@@ -315,8 +411,10 @@ void VulkanRenderer::RenderScene(const scene::Scene& scene)
 
     const glm::mat4 lightViewProjection = BuildLightViewProjection(scene.GetDirectionalLight());
     UploadSceneResources(scene);
+    BuildDebugUi();
     RecordShadowPass(commandBuffers_[currentFrame_], scene, lightViewProjection);
-    RecordScenePass(commandBuffers_[currentFrame_], currentImageIndex_, scene, vkClearColor, lightViewProjection);
+    RecordScenePass(commandBuffers_[currentFrame_], scene, vkClearColor, lightViewProjection);
+    RecordFinalPass(commandBuffers_[currentFrame_], currentImageIndex_);
     clearRecorded_ = true;
 }
 
@@ -337,8 +435,18 @@ void VulkanRenderer::EndFrame()
         const scene::Scene fallbackScene = scene::Scene::CreateDemoScene();
         const glm::mat4 lightViewProjection = BuildLightViewProjection(fallbackScene.GetDirectionalLight());
         UploadSceneResources(fallbackScene);
+        BuildDebugUi();
         RecordShadowPass(commandBuffers_[currentFrame_], fallbackScene, lightViewProjection);
-        RecordScenePass(commandBuffers_[currentFrame_], currentImageIndex_, fallbackScene, fallbackClear, lightViewProjection);
+        RecordScenePass(commandBuffers_[currentFrame_], fallbackScene, fallbackClear, lightViewProjection);
+        RecordFinalPass(commandBuffers_[currentFrame_], currentImageIndex_);
+    }
+
+    if (gpuTimestampsSupported_)
+    {
+        vkCmdWriteTimestamp(commandBuffers_[currentFrame_],
+                            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                            timestampQueryPool_,
+                            static_cast<std::uint32_t>(currentFrame_ * 2 + 1));
     }
 
     Check(vkEndCommandBuffer(commandBuffers_[currentFrame_]), "Failed to end command buffer.");
@@ -381,6 +489,7 @@ void VulkanRenderer::EndFrame()
     currentFrame_ = (currentFrame_ + 1) % MaxFramesInFlight;
     frameStarted_ = false;
     clearRecorded_ = false;
+    lastCpuFrameMs_ = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - cpuFrameStart_).count();
 }
 
 void VulkanRenderer::SetDebugRenderMode(DebugRenderMode mode)
@@ -404,10 +513,13 @@ void VulkanRenderer::Shutdown()
     }
 
     WaitIdle();
+    ShutdownImGui();
     CleanupSwapchain();
     CleanupSceneResources();
     CleanupShadowResources();
+    CleanupPostProcessDescriptorSetLayout();
     CleanupDescriptorSetLayout();
+    CleanupTimingResources();
 
     for (std::size_t i = 0; i < MaxFramesInFlight; ++i)
     {
@@ -660,6 +772,34 @@ void VulkanRenderer::CreateDepthResources()
     depthImageLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
+void VulkanRenderer::CreateSceneColorResources()
+{
+    CreateImage(swapchainExtent_.width,
+                swapchainExtent_.height,
+                sceneColorFormat_,
+                VK_IMAGE_TILING_OPTIMAL,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                sceneColorImage_,
+                sceneColorImageMemory_);
+    sceneColorImageView_ = CreateImageView(sceneColorImage_, sceneColorFormat_, VK_IMAGE_ASPECT_COLOR_BIT);
+    sceneColorImageLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    Check(vkCreateSampler(device_, &samplerInfo, nullptr, &sceneColorSampler_), "Failed to create scene color sampler.");
+}
+
 void VulkanRenderer::CreateShadowResources()
 {
     CreateImage(shadowExtent_.width,
@@ -721,6 +861,28 @@ void VulkanRenderer::CreateDescriptorSetLayout()
 
     Check(vkCreateDescriptorSetLayout(device_, &createInfo, nullptr, &materialDescriptorSetLayout_),
           "Failed to create material descriptor set layout.");
+}
+
+void VulkanRenderer::CreatePostProcessDescriptorSetLayout()
+{
+    std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    createInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
+    createInfo.pBindings = bindings.data();
+
+    Check(vkCreateDescriptorSetLayout(device_, &createInfo, nullptr, &postProcessDescriptorSetLayout_),
+          "Failed to create post-process descriptor set layout.");
 }
 
 void VulkanRenderer::CreateGraphicsPipeline()
@@ -843,7 +1005,7 @@ void VulkanRenderer::CreateGraphicsPipeline()
     VkPipelineRenderingCreateInfo renderingInfo{};
     renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
     renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachmentFormats = &swapchainImageFormat_;
+    renderingInfo.pColorAttachmentFormats = &sceneColorFormat_;
     renderingInfo.depthAttachmentFormat = depthFormat_;
 
     VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -1006,6 +1168,185 @@ void VulkanRenderer::CreateShadowPipeline()
     Check(pipelineResult, "Failed to create shadow pipeline.");
 }
 
+void VulkanRenderer::CreatePostProcessPipeline()
+{
+    const std::vector<std::uint32_t> vertexShaderCode = ReadSpirvFile(ShaderPath("fullscreen.vert.spv"));
+    const std::vector<std::uint32_t> fragmentShaderCode = ReadSpirvFile(ShaderPath("post.frag.spv"));
+
+    const VkShaderModule vertexShaderModule = CreateShaderModule(vertexShaderCode);
+    const VkShaderModule fragmentShaderModule = CreateShaderModule(fragmentShaderCode);
+
+    VkPipelineShaderStageCreateInfo vertexShaderStageInfo{};
+    vertexShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertexShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertexShaderStageInfo.module = vertexShaderModule;
+    vertexShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragmentShaderStageInfo{};
+    fragmentShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragmentShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragmentShaderStageInfo.module = fragmentShaderModule;
+    fragmentShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = {vertexShaderStageInfo, fragmentShaderStageInfo};
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+    rasterizer.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_FALSE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                          VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT |
+                                          VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = static_cast<std::uint32_t>(std::size(dynamicStates));
+    dynamicState.pDynamicStates = dynamicStates;
+
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(PostProcessPushConstants);
+
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &postProcessDescriptorSetLayout_;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+    Check(vkCreatePipelineLayout(device_, &pipelineLayoutInfo, nullptr, &postProcessPipelineLayout_),
+          "Failed to create post-process pipeline layout.");
+
+    VkPipelineRenderingCreateInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachmentFormats = &swapchainImageFormat_;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.pNext = &renderingInfo;
+    pipelineInfo.stageCount = static_cast<std::uint32_t>(std::size(shaderStages));
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = postProcessPipelineLayout_;
+    pipelineInfo.renderPass = VK_NULL_HANDLE;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+    const VkResult pipelineResult = vkCreateGraphicsPipelines(device_,
+                                                              VK_NULL_HANDLE,
+                                                              1,
+                                                              &pipelineInfo,
+                                                              nullptr,
+                                                              &postProcessPipeline_);
+
+    vkDestroyShaderModule(device_, fragmentShaderModule, nullptr);
+    vkDestroyShaderModule(device_, vertexShaderModule, nullptr);
+
+    if (pipelineResult != VK_SUCCESS)
+    {
+        CleanupGraphicsPipeline();
+    }
+    Check(pipelineResult, "Failed to create post-process pipeline.");
+}
+
+void VulkanRenderer::CreatePostProcessResources()
+{
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    poolSizes[0].descriptorCount = 1;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+    poolSizes[1].descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = 1;
+    Check(vkCreateDescriptorPool(device_, &poolInfo, nullptr, &postProcessDescriptorPool_),
+          "Failed to create post-process descriptor pool.");
+
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = postProcessDescriptorPool_;
+    allocateInfo.descriptorSetCount = 1;
+    allocateInfo.pSetLayouts = &postProcessDescriptorSetLayout_;
+    Check(vkAllocateDescriptorSets(device_, &allocateInfo, &postProcessDescriptorSet_),
+          "Failed to allocate post-process descriptor set.");
+
+    VkDescriptorImageInfo sceneColorInfo{};
+    sceneColorInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    sceneColorInfo.imageView = sceneColorImageView_;
+
+    VkDescriptorImageInfo samplerInfo{};
+    samplerInfo.sampler = sceneColorSampler_;
+
+    std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = postProcessDescriptorSet_;
+    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].descriptorCount = 1;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    descriptorWrites[0].pImageInfo = &sceneColorInfo;
+
+    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[1].dstSet = postProcessDescriptorSet_;
+    descriptorWrites[1].dstBinding = 1;
+    descriptorWrites[1].descriptorCount = 1;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    descriptorWrites[1].pImageInfo = &samplerInfo;
+
+    vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+}
+
 void VulkanRenderer::CreateCommandPool()
 {
     const QueueFamilyIndices queueFamilyIndices = FindQueueFamilies(physicalDevice_);
@@ -1029,6 +1370,32 @@ void VulkanRenderer::CreateCommandBuffers()
     allocateInfo.commandBufferCount = static_cast<std::uint32_t>(commandBuffers_.size());
 
     Check(vkAllocateCommandBuffers(device_, &allocateInfo, commandBuffers_.data()), "Failed to allocate command buffers.");
+}
+
+void VulkanRenderer::CreateTimingResources()
+{
+    VkPhysicalDeviceProperties physicalProperties{};
+    vkGetPhysicalDeviceProperties(physicalDevice_, &physicalProperties);
+    timestampPeriod_ = physicalProperties.limits.timestampPeriod;
+
+    std::uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice_, &queueFamilyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice_, &queueFamilyCount, queueFamilies.data());
+
+    const QueueFamilyIndices indices = FindQueueFamilies(physicalDevice_);
+    gpuTimestampsSupported_ = indices.graphicsFamily < queueFamilies.size() &&
+                              queueFamilies[indices.graphicsFamily].timestampValidBits > 0;
+    if (!gpuTimestampsSupported_)
+    {
+        return;
+    }
+
+    VkQueryPoolCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    createInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    createInfo.queryCount = static_cast<std::uint32_t>(MaxFramesInFlight * 2);
+    Check(vkCreateQueryPool(device_, &createInfo, nullptr, &timestampQueryPool_), "Failed to create timestamp query pool.");
 }
 
 void VulkanRenderer::CreateSyncObjects()
@@ -1061,6 +1428,52 @@ void VulkanRenderer::CreateSwapchainSyncObjects()
         Check(vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &semaphore),
               "Failed to create swapchain render finished semaphore.");
     }
+}
+
+void VulkanRenderer::InitializeImGui()
+{
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr;
+    ImGui::StyleColorsDark();
+
+    if (!ImGui_ImplGlfw_InitForVulkan(window_->GetHandle(), true))
+    {
+        throw std::runtime_error("Failed to initialize Dear ImGui GLFW backend.");
+    }
+
+    const QueueFamilyIndices indices = FindQueueFamilies(physicalDevice_);
+    VkPipelineRenderingCreateInfoKHR renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachmentFormats = &swapchainImageFormat_;
+
+    ImGui_ImplVulkan_InitInfo initInfo{};
+    initInfo.ApiVersion = VK_API_VERSION_1_3;
+    initInfo.Instance = instance_;
+    initInfo.PhysicalDevice = physicalDevice_;
+    initInfo.Device = device_;
+    initInfo.QueueFamily = indices.graphicsFamily;
+    initInfo.Queue = graphicsQueue_;
+    initInfo.DescriptorPoolSize = 64;
+    initInfo.MinImageCount = static_cast<std::uint32_t>(MaxFramesInFlight);
+    initInfo.ImageCount = static_cast<std::uint32_t>(swapchainImages_.size());
+    initInfo.UseDynamicRendering = true;
+    initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo = renderingInfo;
+    initInfo.CheckVkResultFn = CheckImGuiVkResult;
+
+    if (!ImGui_ImplVulkan_Init(&initInfo))
+    {
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        throw std::runtime_error("Failed to initialize Dear ImGui Vulkan backend.");
+    }
+
+    shadowPreviewDescriptor_ = ImGui_ImplVulkan_AddTexture(shadowSampler_,
+                                                           shadowImageView_,
+                                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    imguiInitialized_ = true;
 }
 
 void VulkanRenderer::CleanupSwapchainSyncObjects()
@@ -1147,6 +1560,15 @@ void VulkanRenderer::CleanupDescriptorSetLayout()
     }
 }
 
+void VulkanRenderer::CleanupPostProcessDescriptorSetLayout()
+{
+    if (postProcessDescriptorSetLayout_ != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(device_, postProcessDescriptorSetLayout_, nullptr);
+        postProcessDescriptorSetLayout_ = VK_NULL_HANDLE;
+    }
+}
+
 void VulkanRenderer::CleanupDepthResources()
 {
     if (depthImageView_ != VK_NULL_HANDLE)
@@ -1166,6 +1588,32 @@ void VulkanRenderer::CleanupDepthResources()
     }
 
     depthImageLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+}
+
+void VulkanRenderer::CleanupSceneColorResources()
+{
+    if (sceneColorSampler_ != VK_NULL_HANDLE)
+    {
+        vkDestroySampler(device_, sceneColorSampler_, nullptr);
+        sceneColorSampler_ = VK_NULL_HANDLE;
+    }
+    if (sceneColorImageView_ != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(device_, sceneColorImageView_, nullptr);
+        sceneColorImageView_ = VK_NULL_HANDLE;
+    }
+    if (sceneColorImage_ != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(device_, sceneColorImage_, nullptr);
+        sceneColorImage_ = VK_NULL_HANDLE;
+    }
+    if (sceneColorImageMemory_ != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(device_, sceneColorImageMemory_, nullptr);
+        sceneColorImageMemory_ = VK_NULL_HANDLE;
+    }
+
+    sceneColorImageLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
 void VulkanRenderer::CleanupShadowResources()
@@ -1194,10 +1642,55 @@ void VulkanRenderer::CleanupShadowResources()
     shadowImageLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
+void VulkanRenderer::CleanupPostProcessResources()
+{
+    if (postProcessDescriptorPool_ != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(device_, postProcessDescriptorPool_, nullptr);
+        postProcessDescriptorPool_ = VK_NULL_HANDLE;
+    }
+
+    postProcessDescriptorSet_ = VK_NULL_HANDLE;
+}
+
+void VulkanRenderer::CleanupTimingResources()
+{
+    if (timestampQueryPool_ != VK_NULL_HANDLE)
+    {
+        vkDestroyQueryPool(device_, timestampQueryPool_, nullptr);
+        timestampQueryPool_ = VK_NULL_HANDLE;
+    }
+
+    gpuTimestampsSupported_ = false;
+    timestampFrameReady_.fill(false);
+    lastGpuFrameMs_ = 0.0f;
+}
+
+void VulkanRenderer::ShutdownImGui()
+{
+    if (!imguiInitialized_)
+    {
+        return;
+    }
+
+    if (shadowPreviewDescriptor_ != VK_NULL_HANDLE)
+    {
+        ImGui_ImplVulkan_RemoveTexture(shadowPreviewDescriptor_);
+        shadowPreviewDescriptor_ = VK_NULL_HANDLE;
+    }
+
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    imguiInitialized_ = false;
+}
+
 void VulkanRenderer::CleanupSwapchain()
 {
     CleanupSwapchainSyncObjects();
+    CleanupPostProcessResources();
     CleanupGraphicsPipeline();
+    CleanupSceneColorResources();
     CleanupDepthResources();
 
     for (VkImageView imageView : swapchainImageViews_)
@@ -1234,8 +1727,11 @@ void VulkanRenderer::RecreateSwapchain()
     CreateSwapchain();
     CreateImageViews();
     CreateDepthResources();
+    CreateSceneColorResources();
     CreateGraphicsPipeline();
     CreateShadowPipeline();
+    CreatePostProcessPipeline();
+    CreatePostProcessResources();
     CreateSwapchainSyncObjects();
 }
 
@@ -1550,7 +2046,6 @@ void VulkanRenderer::RecordShadowPass(VkCommandBuffer commandBuffer,
 }
 
 void VulkanRenderer::RecordScenePass(VkCommandBuffer commandBuffer,
-                                     std::uint32_t imageIndex,
                                      const scene::Scene& scene,
                                      VkClearColorValue clearColor,
                                      const glm::mat4& lightViewProjection)
@@ -1558,12 +2053,12 @@ void VulkanRenderer::RecordScenePass(VkCommandBuffer commandBuffer,
     VkClearValue clearValue{};
     clearValue.color = clearColor;
 
-    TransitionSwapchainImageLayout(commandBuffer, imageIndex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    TransitionSceneColorImageLayout(commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     TransitionDepthImageLayout(commandBuffer, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
     VkRenderingAttachmentInfo colorAttachment{};
     colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    colorAttachment.imageView = swapchainImageViews_[imageIndex];
+    colorAttachment.imageView = sceneColorImageView_;
     colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1679,7 +2174,131 @@ void VulkanRenderer::RecordScenePass(VkCommandBuffer commandBuffer,
         vkCmdDrawIndexed(commandBuffer, mesh.indexCount, 1, 0, 0, 0);
     }
     vkCmdEndRendering(commandBuffer);
+    TransitionSceneColorImageLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
+void VulkanRenderer::RecordFinalPass(VkCommandBuffer commandBuffer, std::uint32_t imageIndex)
+{
+    TransitionSwapchainImageLayout(commandBuffer, imageIndex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    VkClearValue clearValue{};
+    clearValue.color.float32[0] = 0.0f;
+    clearValue.color.float32[1] = 0.0f;
+    clearValue.color.float32[2] = 0.0f;
+    clearValue.color.float32[3] = 1.0f;
+
+    VkRenderingAttachmentInfo colorAttachment{};
+    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    colorAttachment.imageView = swapchainImageViews_[imageIndex];
+    colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.clearValue = clearValue;
+
+    VkRenderingInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    renderingInfo.renderArea.offset = {0, 0};
+    renderingInfo.renderArea.extent = swapchainExtent_;
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachment;
+
+    vkCmdBeginRendering(commandBuffer, &renderingInfo);
+
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postProcessPipeline_);
+    vkCmdBindDescriptorSets(commandBuffer,
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            postProcessPipelineLayout_,
+                            0,
+                            1,
+                            &postProcessDescriptorSet_,
+                            0,
+                            nullptr);
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(swapchainExtent_.width);
+    viewport.height = static_cast<float>(swapchainExtent_.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = swapchainExtent_;
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+    const PostProcessPushConstants pushConstants{
+        glm::vec4{exposure_, gamma_, 0.0f, 0.0f},
+    };
+    vkCmdPushConstants(commandBuffer,
+                       postProcessPipelineLayout_,
+                       VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0,
+                       sizeof(PostProcessPushConstants),
+                       &pushConstants);
+    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+    if (imguiInitialized_)
+    {
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+    }
+
+    vkCmdEndRendering(commandBuffer);
     TransitionSwapchainImageLayout(commandBuffer, imageIndex, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+}
+
+void VulkanRenderer::BuildDebugUi()
+{
+    if (!imguiInitialized_)
+    {
+        return;
+    }
+
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    ImGui::SetNextWindowPos(ImVec2{12.0f, 12.0f}, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2{340.0f, 460.0f}, ImGuiCond_FirstUseEver);
+    ImGui::Begin("Kosmos Renderer");
+
+    ImGui::Text("Frame Timing");
+    ImGui::Text("CPU: %.2f ms", lastCpuFrameMs_);
+    if (gpuTimestampsSupported_)
+    {
+        ImGui::Text("GPU: %.2f ms", lastGpuFrameMs_);
+    }
+    else
+    {
+        ImGui::TextUnformatted("GPU: unavailable");
+    }
+
+    ImGui::Separator();
+    static constexpr const char* DebugModeNames[] = {"Lit", "Albedo", "Normal", "Roughness", "Metallic", "Shadow"};
+    int debugModeIndex = static_cast<int>(debugRenderMode_);
+    if (ImGui::Combo("Render Mode", &debugModeIndex, DebugModeNames, static_cast<int>(std::size(DebugModeNames))))
+    {
+        debugRenderMode_ = DebugRenderModeFromIndex(debugModeIndex);
+    }
+
+    ImGui::SliderFloat("Exposure", &exposure_, 0.1f, 5.0f, "%.2f");
+    ImGui::SliderFloat("Gamma", &gamma_, 1.0f, 3.0f, "%.2f");
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Shadow Map");
+    if (shadowPreviewDescriptor_ != VK_NULL_HANDLE)
+    {
+        const ImTextureID textureId = static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(shadowPreviewDescriptor_));
+        ImGui::Image(ImTextureRef{textureId},
+                     ImVec2{220.0f, 220.0f},
+                     ImVec2{0.0f, 1.0f},
+                     ImVec2{1.0f, 0.0f});
+    }
+
+    ImGui::End();
+    ImGui::Render();
 }
 
 void VulkanRenderer::TransitionSwapchainImageLayout(VkCommandBuffer commandBuffer,
@@ -1785,6 +2404,66 @@ void VulkanRenderer::TransitionDepthImageLayout(VkCommandBuffer commandBuffer, V
                          &barrier);
 
     depthImageLayout_ = newLayout;
+}
+
+void VulkanRenderer::TransitionSceneColorImageLayout(VkCommandBuffer commandBuffer, VkImageLayout newLayout)
+{
+    if (sceneColorImageLayout_ == newLayout)
+    {
+        return;
+    }
+
+    VkPipelineStageFlags sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkPipelineStageFlags destinationStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkAccessFlags sourceAccess = 0;
+    VkAccessFlags destinationAccess = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    if (sceneColorImageLayout_ == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+    {
+        sourceStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        sourceAccess = VK_ACCESS_SHADER_READ_BIT;
+    }
+    else if (sceneColorImageLayout_ == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+    {
+        sourceStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        sourceAccess = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    }
+
+    if (newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+    {
+        sourceStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        sourceAccess = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        destinationAccess = VK_ACCESS_SHADER_READ_BIT;
+    }
+
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcAccessMask = sourceAccess;
+    barrier.dstAccessMask = destinationAccess;
+    barrier.oldLayout = sceneColorImageLayout_;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = sceneColorImage_;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    vkCmdPipelineBarrier(commandBuffer,
+                         sourceStage,
+                         destinationStage,
+                         0,
+                         0,
+                         nullptr,
+                         0,
+                         nullptr,
+                         1,
+                         &barrier);
+
+    sceneColorImageLayout_ = newLayout;
 }
 
 void VulkanRenderer::TransitionShadowImageLayout(VkCommandBuffer commandBuffer, VkImageLayout newLayout)
@@ -1962,6 +2641,18 @@ void VulkanRenderer::CopyBufferToImage(VkBuffer sourceBuffer, VkImage destinatio
 
 void VulkanRenderer::CleanupGraphicsPipeline()
 {
+    if (postProcessPipeline_ != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(device_, postProcessPipeline_, nullptr);
+        postProcessPipeline_ = VK_NULL_HANDLE;
+    }
+
+    if (postProcessPipelineLayout_ != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(device_, postProcessPipelineLayout_, nullptr);
+        postProcessPipelineLayout_ = VK_NULL_HANDLE;
+    }
+
     if (shadowPipeline_ != VK_NULL_HANDLE)
     {
         vkDestroyPipeline(device_, shadowPipeline_, nullptr);
@@ -2213,11 +2904,21 @@ bool VulkanRenderer::CheckDeviceExtensionSupport(VkPhysicalDevice device) const
 VkSurfaceFormatKHR VulkanRenderer::ChooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats) const
 {
     const auto preferred = std::find_if(formats.begin(), formats.end(), [](const VkSurfaceFormatKHR& format) {
+        return format.format == VK_FORMAT_B8G8R8A8_UNORM &&
+               format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    });
+
+    if (preferred != formats.end())
+    {
+        return *preferred;
+    }
+
+    const auto srgbFallback = std::find_if(formats.begin(), formats.end(), [](const VkSurfaceFormatKHR& format) {
         return format.format == VK_FORMAT_B8G8R8A8_SRGB &&
                format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     });
 
-    return preferred != formats.end() ? *preferred : formats.front();
+    return srgbFallback != formats.end() ? *srgbFallback : formats.front();
 }
 
 VkPresentModeKHR VulkanRenderer::ChooseSwapPresentMode(const std::vector<VkPresentModeKHR>& presentModes) const

@@ -7,6 +7,8 @@
 - `mesh.vert.hlsl`：读取 vertex buffer 中的位置、法线、UV 和 tangent，通过 push constant 中的 MVP / model 矩阵输出裁剪空间位置、世界坐标、世界法线和 TBN 所需数据。
 - `mesh.frag.hlsl`：通过材质 descriptor set 采样 base color、metallic-roughness、normal texture 和 shadow map，使用简化 Cook-Torrance BRDF 计算 directional light 下的 metallic-roughness PBR 结果。
 - `shadow.vert.hlsl`：shadow pass 的 vertex shader，只把 mesh 顶点变换到 light clip space，用来写入深度阴影贴图。
+- `fullscreen.vert.hlsl`：后处理 pass 使用的全屏三角形 vertex shader，不需要 vertex buffer。
+- `post.frag.hlsl`：采样离屏 scene color，执行 exposure tone mapping 和 gamma correction，再输出到 swapchain。
 
 当前材质贴图绑定约定：
 
@@ -25,6 +27,8 @@ CMake 配置时会查找 Vulkan SDK 自带的 `dxc`，构建前自动把 HLSL �
 build/shaders/mesh.vert.spv
 build/shaders/mesh.frag.spv
 build/shaders/shadow.vert.spv
+build/shaders/fullscreen.vert.spv
+build/shaders/post.frag.spv
 ```
 
 也可以手动运行：

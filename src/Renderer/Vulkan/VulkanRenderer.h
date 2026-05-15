@@ -3,6 +3,7 @@
 #include "Renderer/Renderer.h"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -78,34 +79,47 @@ private:
     void CreateSwapchain();
     void CreateImageViews();
     void CreateDepthResources();
+    void CreateSceneColorResources();
     void CreateShadowResources();
     void CreateDescriptorSetLayout();
+    void CreatePostProcessDescriptorSetLayout();
     void CreateGraphicsPipeline();
     void CreateShadowPipeline();
+    void CreatePostProcessPipeline();
+    void CreatePostProcessResources();
     void CreateCommandPool();
     void CreateCommandBuffers();
+    void CreateTimingResources();
     void CreateSyncObjects();
     void CreateSwapchainSyncObjects();
+    void InitializeImGui();
 
     void CleanupGraphicsPipeline();
     void CleanupSceneResources();
     void CleanupDescriptorSetLayout();
+    void CleanupPostProcessDescriptorSetLayout();
     void CleanupDepthResources();
+    void CleanupSceneColorResources();
     void CleanupShadowResources();
+    void CleanupPostProcessResources();
+    void CleanupTimingResources();
     void CleanupSwapchainSyncObjects();
     void CleanupSwapchain();
+    void ShutdownImGui();
     void RecreateSwapchain();
     void UploadSceneResources(const scene::Scene& scene);
     void RecordScenePass(VkCommandBuffer commandBuffer,
-                         std::uint32_t imageIndex,
                          const scene::Scene& scene,
                          VkClearColorValue clearColor,
                          const glm::mat4& lightViewProjection);
     void RecordShadowPass(VkCommandBuffer commandBuffer,
                           const scene::Scene& scene,
                           const glm::mat4& lightViewProjection);
+    void RecordFinalPass(VkCommandBuffer commandBuffer, std::uint32_t imageIndex);
+    void BuildDebugUi();
     void TransitionSwapchainImageLayout(VkCommandBuffer commandBuffer, std::uint32_t imageIndex, VkImageLayout newLayout);
     void TransitionDepthImageLayout(VkCommandBuffer commandBuffer, VkImageLayout newLayout);
+    void TransitionSceneColorImageLayout(VkCommandBuffer commandBuffer, VkImageLayout newLayout);
     void TransitionShadowImageLayout(VkCommandBuffer commandBuffer, VkImageLayout newLayout);
     void TransitionImageLayout(VkCommandBuffer commandBuffer,
                                VkImage image,
@@ -150,6 +164,8 @@ private:
     bool frameStarted_ = false;
     bool clearRecorded_ = false;
     DebugRenderMode debugRenderMode_ = DebugRenderMode::Lit;
+    float exposure_ = 1.0f;
+    float gamma_ = 2.2f;
 
     VkInstance instance_ = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT debugMessenger_ = VK_NULL_HANDLE;
@@ -166,16 +182,26 @@ private:
     VkFormat swapchainImageFormat_ = VK_FORMAT_UNDEFINED;
     VkExtent2D swapchainExtent_{};
     VkDescriptorSetLayout materialDescriptorSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout postProcessDescriptorSetLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout shadowPipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout postProcessPipelineLayout_ = VK_NULL_HANDLE;
+    VkPipeline postProcessPipeline_ = VK_NULL_HANDLE;
 
     VkFormat depthFormat_ = VK_FORMAT_D32_SFLOAT;
     VkImage depthImage_ = VK_NULL_HANDLE;
     VkDeviceMemory depthImageMemory_ = VK_NULL_HANDLE;
     VkImageView depthImageView_ = VK_NULL_HANDLE;
     VkImageLayout depthImageLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkFormat sceneColorFormat_ = VK_FORMAT_R16G16B16A16_SFLOAT;
+    VkImage sceneColorImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory sceneColorImageMemory_ = VK_NULL_HANDLE;
+    VkImageView sceneColorImageView_ = VK_NULL_HANDLE;
+    VkSampler sceneColorSampler_ = VK_NULL_HANDLE;
+    VkImageLayout sceneColorImageLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
 
     VkExtent2D shadowExtent_{2048, 2048};
     VkImage shadowImage_ = VK_NULL_HANDLE;
@@ -190,10 +216,24 @@ private:
     std::vector<GpuMesh> gpuMeshes_;
     std::vector<GpuTexture> gpuTextures_;
     std::vector<GpuMaterial> gpuMaterials_;
+    VkDescriptorPool postProcessDescriptorPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet postProcessDescriptorSet_ = VK_NULL_HANDLE;
     const scene::Scene* uploadedScene_ = nullptr;
     std::size_t uploadedSceneResourceVersion_ = static_cast<std::size_t>(-1);
 
     static constexpr std::size_t MaxFramesInFlight = 2;
+
+    bool imguiInitialized_ = false;
+    VkDescriptorSet shadowPreviewDescriptor_ = VK_NULL_HANDLE;
+
+    VkQueryPool timestampQueryPool_ = VK_NULL_HANDLE;
+    float timestampPeriod_ = 1.0f;
+    bool gpuTimestampsSupported_ = false;
+    std::array<bool, MaxFramesInFlight> timestampFrameReady_{};
+    std::chrono::steady_clock::time_point cpuFrameStart_{};
+    float lastCpuFrameMs_ = 0.0f;
+    float lastGpuFrameMs_ = 0.0f;
+
     std::array<VkSemaphore, MaxFramesInFlight> imageAvailableSemaphores_{};
     std::array<VkFence, MaxFramesInFlight> inFlightFences_{};
     std::vector<VkSemaphore> renderFinishedSemaphores_;

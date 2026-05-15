@@ -46,8 +46,11 @@ constexpr std::array<const char*, 1> DeviceExtensions = {
 struct PushConstants
 {
     glm::mat4 mvp{1.0f};
+    glm::mat4 model{1.0f};
     glm::vec4 baseColor{1.0f};
     glm::vec4 lightDirectionIntensity{0.0f, -1.0f, 0.0f, 1.0f};
+    glm::vec4 cameraPositionMetallic{0.0f};
+    glm::vec4 lightColorRoughness{1.0f};
 };
 
 void Check(VkResult result, const char* message)
@@ -628,19 +631,19 @@ void VulkanRenderer::CreateDepthResources()
 
 void VulkanRenderer::CreateDescriptorSetLayout()
 {
-    VkDescriptorSetLayoutBinding textureBinding{};
-    textureBinding.binding = 0;
-    textureBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    textureBinding.descriptorCount = 1;
-    textureBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    std::array<VkDescriptorSetLayoutBinding, 4> bindings{};
+    for (std::uint32_t binding = 0; binding < 3; ++binding)
+    {
+        bindings[binding].binding = binding;
+        bindings[binding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        bindings[binding].descriptorCount = 1;
+        bindings[binding].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
 
-    VkDescriptorSetLayoutBinding samplerBinding{};
-    samplerBinding.binding = 1;
-    samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-    samplerBinding.descriptorCount = 1;
-    samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    const std::array<VkDescriptorSetLayoutBinding, 2> bindings = {textureBinding, samplerBinding};
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -678,7 +681,7 @@ void VulkanRenderer::CreateGraphicsPipeline()
     bindingDescription.stride = sizeof(scene::Vertex);
     bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-    std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
+    std::array<VkVertexInputAttributeDescription, 4> attributeDescriptions{};
     attributeDescriptions[0].binding = 0;
     attributeDescriptions[0].location = 0;
     attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -691,6 +694,10 @@ void VulkanRenderer::CreateGraphicsPipeline()
     attributeDescriptions[2].location = 2;
     attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
     attributeDescriptions[2].offset = static_cast<std::uint32_t>(offsetof(scene::Vertex, texCoord));
+    attributeDescriptions[3].binding = 0;
+    attributeDescriptions[3].location = 3;
+    attributeDescriptions[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attributeDescriptions[3].offset = static_cast<std::uint32_t>(offsetof(scene::Vertex, tangent));
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -752,7 +759,7 @@ void VulkanRenderer::CreateGraphicsPipeline()
     dynamicState.pDynamicStates = dynamicStates;
 
     VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;
     pushConstantRange.size = sizeof(PushConstants);
 
@@ -925,6 +932,7 @@ void VulkanRenderer::CleanupSceneResources()
         }
     }
     gpuTextures_.clear();
+    gpuMaterials_.clear();
 
     if (descriptorPool_ != VK_NULL_HANDLE)
     {
@@ -1050,19 +1058,20 @@ void VulkanRenderer::UploadSceneResources(const scene::Scene& scene)
     };
 
     const std::vector<scene::TextureData>& textures = scene.GetTextures();
-    const std::uint32_t textureCount = static_cast<std::uint32_t>(std::max<std::size_t>(1, textures.size()));
+    const std::vector<scene::Material>& materials = scene.GetMaterials();
+    const std::uint32_t materialCount = static_cast<std::uint32_t>(std::max<std::size_t>(1, materials.size()));
 
     std::array<VkDescriptorPoolSize, 2> poolSizes{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    poolSizes[0].descriptorCount = textureCount;
+    poolSizes[0].descriptorCount = materialCount * 3;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
-    poolSizes[1].descriptorCount = textureCount;
+    poolSizes[1].descriptorCount = materialCount;
 
     VkDescriptorPoolCreateInfo descriptorPoolInfo{};
     descriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     descriptorPoolInfo.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
     descriptorPoolInfo.pPoolSizes = poolSizes.data();
-    descriptorPoolInfo.maxSets = textureCount;
+    descriptorPoolInfo.maxSets = materialCount;
     Check(vkCreateDescriptorPool(device_, &descriptorPoolInfo, nullptr, &descriptorPool_),
           "Failed to create material descriptor pool.");
 
@@ -1097,9 +1106,10 @@ void VulkanRenderer::UploadSceneResources(const scene::Scene& scene)
         vkUnmapMemory(device_, stagingBufferMemory);
 
         GpuTexture& texture = gpuTextures_[textureIndex];
+        const VkFormat textureFormat = textureData.srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
         CreateImage(width,
                     height,
-                    VK_FORMAT_R8G8B8A8_SRGB,
+                    textureFormat,
                     VK_IMAGE_TILING_OPTIMAL,
                     VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -1127,7 +1137,7 @@ void VulkanRenderer::UploadSceneResources(const scene::Scene& scene)
         vkDestroyBuffer(device_, stagingBuffer, nullptr);
         vkFreeMemory(device_, stagingBufferMemory, nullptr);
 
-        texture.imageView = CreateImageView(texture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+        texture.imageView = CreateImageView(texture.image, textureFormat, VK_IMAGE_ASPECT_COLOR_BIT);
 
         VkSamplerCreateInfo samplerInfo{};
         samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -1143,34 +1153,57 @@ void VulkanRenderer::UploadSceneResources(const scene::Scene& scene)
         samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
         Check(vkCreateSampler(device_, &samplerInfo, nullptr, &texture.sampler), "Failed to create texture sampler.");
 
+    }
+
+    const auto validTextureIndex = [this](std::size_t textureIndex) {
+        return textureIndex < gpuTextures_.size() ? textureIndex : std::size_t{0};
+    };
+
+    gpuMaterials_.resize(materialCount);
+    for (std::size_t materialIndex = 0; materialIndex < gpuMaterials_.size(); ++materialIndex)
+    {
+        const scene::Material fallbackMaterial{};
+        const scene::Material& material = materialIndex < materials.size() ? materials[materialIndex] : fallbackMaterial;
+        const std::size_t baseColorTexture = validTextureIndex(material.baseColorTextureIndex);
+        const std::size_t metallicRoughnessTexture = validTextureIndex(material.metallicRoughnessTextureIndex);
+        const std::size_t normalTexture = validTextureIndex(material.normalTextureIndex);
+
         VkDescriptorSetAllocateInfo allocateInfo{};
         allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocateInfo.descriptorPool = descriptorPool_;
         allocateInfo.descriptorSetCount = 1;
         allocateInfo.pSetLayouts = &materialDescriptorSetLayout_;
-        Check(vkAllocateDescriptorSets(device_, &allocateInfo, &texture.descriptorSet), "Failed to allocate material descriptor set.");
+        Check(vkAllocateDescriptorSets(device_, &allocateInfo, &gpuMaterials_[materialIndex].descriptorSet),
+              "Failed to allocate material descriptor set.");
 
-        VkDescriptorImageInfo sampledImageInfo{};
-        sampledImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        sampledImageInfo.imageView = texture.imageView;
+        std::array<VkDescriptorImageInfo, 3> sampledImageInfos{};
+        sampledImageInfos[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sampledImageInfos[0].imageView = gpuTextures_[baseColorTexture].imageView;
+        sampledImageInfos[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sampledImageInfos[1].imageView = gpuTextures_[metallicRoughnessTexture].imageView;
+        sampledImageInfos[2].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sampledImageInfos[2].imageView = gpuTextures_[normalTexture].imageView;
 
         VkDescriptorImageInfo samplerDescriptorInfo{};
-        samplerDescriptorInfo.sampler = texture.sampler;
+        samplerDescriptorInfo.sampler = gpuTextures_[baseColorTexture].sampler;
 
-        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
-        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[0].dstSet = texture.descriptorSet;
-        descriptorWrites[0].dstBinding = 0;
-        descriptorWrites[0].descriptorCount = 1;
-        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        descriptorWrites[0].pImageInfo = &sampledImageInfo;
+        std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
+        for (std::uint32_t binding = 0; binding < 3; ++binding)
+        {
+            descriptorWrites[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[binding].dstSet = gpuMaterials_[materialIndex].descriptorSet;
+            descriptorWrites[binding].dstBinding = binding;
+            descriptorWrites[binding].descriptorCount = 1;
+            descriptorWrites[binding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            descriptorWrites[binding].pImageInfo = &sampledImageInfos[binding];
+        }
 
-        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrites[1].dstSet = texture.descriptorSet;
-        descriptorWrites[1].dstBinding = 1;
-        descriptorWrites[1].descriptorCount = 1;
-        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-        descriptorWrites[1].pImageInfo = &samplerDescriptorInfo;
+        descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[3].dstSet = gpuMaterials_[materialIndex].descriptorSet;
+        descriptorWrites[3].dstBinding = 3;
+        descriptorWrites[3].descriptorCount = 1;
+        descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        descriptorWrites[3].pImageInfo = &samplerDescriptorInfo;
 
         vkUpdateDescriptorSets(device_, static_cast<std::uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
@@ -1284,10 +1317,10 @@ void VulkanRenderer::RecordScenePass(VkCommandBuffer commandBuffer,
             material = &materials[mesh.materialIndex];
         }
         const glm::vec4 baseColor = material != nullptr ? ToVec4(material->baseColor) : glm::vec4{1.0f};
-        const std::size_t textureIndex = material != nullptr && material->baseColorTextureIndex < gpuTextures_.size()
-                                             ? material->baseColorTextureIndex
-                                             : 0;
-        if (textureIndex >= gpuTextures_.size())
+        const float metallic = material != nullptr ? material->metallic : 0.0f;
+        const float roughness = material != nullptr ? material->roughness : 0.5f;
+        const std::size_t materialIndex = mesh.materialIndex < gpuMaterials_.size() ? mesh.materialIndex : 0;
+        if (materialIndex >= gpuMaterials_.size())
         {
             continue;
         }
@@ -1297,7 +1330,7 @@ void VulkanRenderer::RecordScenePass(VkCommandBuffer commandBuffer,
                                 pipelineLayout_,
                                 0,
                                 1,
-                                &gpuTextures_[textureIndex].descriptorSet,
+                                &gpuMaterials_[materialIndex].descriptorSet,
                                 0,
                                 nullptr);
 
@@ -1309,10 +1342,18 @@ void VulkanRenderer::RecordScenePass(VkCommandBuffer commandBuffer,
         const glm::mat4 instanceModel = meshInstance.useWorldTransform
                                             ? meshInstance.worldTransform
                                             : BuildModelMatrix(meshInstance.transform);
-        const PushConstants pushConstants{projection * view * instanceModel, baseColor, lightDirectionIntensity};
+        const scene::Color& lightColor = scene.GetDirectionalLight().color;
+        const PushConstants pushConstants{
+            projection * view * instanceModel,
+            instanceModel,
+            baseColor,
+            lightDirectionIntensity,
+            glm::vec4{camera.GetPosition(), metallic},
+            glm::vec4{lightColor.r, lightColor.g, lightColor.b, roughness},
+        };
         vkCmdPushConstants(commandBuffer,
                            pipelineLayout_,
-                           VK_SHADER_STAGE_VERTEX_BIT,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0,
                            sizeof(PushConstants),
                            &pushConstants);

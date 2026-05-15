@@ -1,6 +1,7 @@
 #include "Assets/GltfLoader.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -16,6 +17,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/mat4x4.hpp>
+#include <glm/vec4.hpp>
 
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
@@ -32,7 +34,26 @@ scene::TextureData CreateWhiteTexture()
     texture.name = "DefaultWhite";
     texture.width = 1;
     texture.height = 1;
+    texture.srgb = true;
     texture.rgbaPixels = {255, 255, 255, 255};
+    return texture;
+}
+
+scene::TextureData CreateDefaultMetallicRoughnessTexture()
+{
+    scene::TextureData texture;
+    texture.name = "DefaultMetallicRoughness";
+    texture.srgb = false;
+    texture.rgbaPixels = {255, 255, 255, 255};
+    return texture;
+}
+
+scene::TextureData CreateDefaultNormalTexture()
+{
+    scene::TextureData texture;
+    texture.name = "DefaultNormal";
+    texture.srgb = false;
+    texture.rgbaPixels = {128, 128, 255, 255};
     return texture;
 }
 
@@ -124,6 +145,31 @@ std::vector<glm::vec2> ReadVec2Accessor(const tinygltf::Model& model, int access
     return values;
 }
 
+std::vector<glm::vec4> ReadVec4Accessor(const tinygltf::Model& model, int accessorIndex)
+{
+    if (accessorIndex < 0)
+    {
+        return {};
+    }
+
+    const tinygltf::Accessor& accessor = model.accessors[static_cast<std::size_t>(accessorIndex)];
+    if (accessor.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT || accessor.type != TINYGLTF_TYPE_VEC4)
+    {
+        throw std::runtime_error("glTF accessor must be FLOAT VEC4.");
+    }
+
+    const unsigned char* data = AccessorData(model, accessor);
+    const std::size_t stride = AccessorStride(model, accessor);
+
+    std::vector<glm::vec4> values(accessor.count);
+    for (std::size_t i = 0; i < accessor.count; ++i)
+    {
+        const auto* element = reinterpret_cast<const float*>(data + i * stride);
+        values[i] = glm::vec4{element[0], element[1], element[2], element[3]};
+    }
+    return values;
+}
+
 std::vector<std::uint32_t> ReadIndexAccessor(const tinygltf::Model& model, int accessorIndex, std::size_t vertexCount)
 {
     if (accessorIndex < 0)
@@ -206,7 +252,76 @@ void GenerateNormalsIfMissing(scene::Mesh& mesh)
     }
 }
 
-scene::TextureData ConvertImage(const tinygltf::Image& image, std::string fallbackName)
+void GenerateTangentsIfMissing(scene::Mesh& mesh)
+{
+    bool hasTangent = false;
+    for (const scene::Vertex& vertex : mesh.vertices)
+    {
+        if (glm::length(glm::vec3{vertex.tangent}) > 0.001f)
+        {
+            hasTangent = true;
+            break;
+        }
+    }
+
+    if (hasTangent)
+    {
+        return;
+    }
+
+    std::vector<glm::vec3> tangents(mesh.vertices.size(), glm::vec3{0.0f});
+    std::vector<glm::vec3> bitangents(mesh.vertices.size(), glm::vec3{0.0f});
+
+    for (std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
+    {
+        const std::uint32_t i0 = mesh.indices[i + 0];
+        const std::uint32_t i1 = mesh.indices[i + 1];
+        const std::uint32_t i2 = mesh.indices[i + 2];
+
+        const scene::Vertex& v0 = mesh.vertices[i0];
+        const scene::Vertex& v1 = mesh.vertices[i1];
+        const scene::Vertex& v2 = mesh.vertices[i2];
+
+        const glm::vec3 edge1 = v1.position - v0.position;
+        const glm::vec3 edge2 = v2.position - v0.position;
+        const glm::vec2 deltaUv1 = v1.texCoord - v0.texCoord;
+        const glm::vec2 deltaUv2 = v2.texCoord - v0.texCoord;
+        const float determinant = deltaUv1.x * deltaUv2.y - deltaUv2.x * deltaUv1.y;
+        if (std::abs(determinant) < 0.000001f)
+        {
+            continue;
+        }
+
+        const float inverseDeterminant = 1.0f / determinant;
+        const glm::vec3 tangent = (edge1 * deltaUv2.y - edge2 * deltaUv1.y) * inverseDeterminant;
+        const glm::vec3 bitangent = (edge2 * deltaUv1.x - edge1 * deltaUv2.x) * inverseDeterminant;
+
+        tangents[i0] += tangent;
+        tangents[i1] += tangent;
+        tangents[i2] += tangent;
+        bitangents[i0] += bitangent;
+        bitangents[i1] += bitangent;
+        bitangents[i2] += bitangent;
+    }
+
+    for (std::size_t i = 0; i < mesh.vertices.size(); ++i)
+    {
+        const glm::vec3 normal = glm::normalize(mesh.vertices[i].normal);
+        glm::vec3 tangent = tangents[i];
+        if (glm::length(tangent) < 0.001f)
+        {
+            tangent = std::abs(normal.y) < 0.999f
+                          ? glm::normalize(glm::cross(glm::vec3{0.0f, 1.0f, 0.0f}, normal))
+                          : glm::normalize(glm::cross(glm::vec3{1.0f, 0.0f, 0.0f}, normal));
+        }
+
+        tangent = glm::normalize(tangent - normal * glm::dot(normal, tangent));
+        const float handedness = glm::dot(glm::cross(normal, tangent), bitangents[i]) < 0.0f ? -1.0f : 1.0f;
+        mesh.vertices[i].tangent = glm::vec4{tangent, handedness};
+    }
+}
+
+scene::TextureData ConvertImage(const tinygltf::Image& image, std::string fallbackName, bool srgb)
 {
     if (image.width <= 0 || image.height <= 0 || image.image.empty())
     {
@@ -217,6 +332,7 @@ scene::TextureData ConvertImage(const tinygltf::Image& image, std::string fallba
     texture.name = image.name.empty() ? std::move(fallbackName) : image.name;
     texture.width = static_cast<std::uint32_t>(image.width);
     texture.height = static_cast<std::uint32_t>(image.height);
+    texture.srgb = srgb;
     texture.rgbaPixels.resize(static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4);
 
     const int components = std::max(1, image.component);
@@ -312,16 +428,29 @@ scene::Scene GltfLoader::LoadStaticScene(const std::filesystem::path& path) cons
 
     scene::Scene scene;
     const std::size_t defaultTexture = scene.AddTexture(CreateWhiteTexture());
-    const std::size_t defaultMaterial = scene.AddMaterial(scene::Material{"DefaultGltfMaterial", scene::Color{0.8f, 0.8f, 0.8f, 1.0f}, 0.0f, 0.5f, defaultTexture});
+    const std::size_t defaultMetallicRoughnessTexture = scene.AddTexture(CreateDefaultMetallicRoughnessTexture());
+    const std::size_t defaultNormalTexture = scene.AddTexture(CreateDefaultNormalTexture());
+    const std::size_t defaultMaterial = scene.AddMaterial(scene::Material{"DefaultGltfMaterial",
+                                                                          scene::Color{0.8f, 0.8f, 0.8f, 1.0f},
+                                                                          0.0f,
+                                                                          0.5f,
+                                                                          defaultTexture,
+                                                                          defaultMetallicRoughnessTexture,
+                                                                          defaultNormalTexture});
 
-    std::vector<std::size_t> textureMap(model.textures.size(), defaultTexture);
+    std::vector<std::size_t> srgbTextureMap(model.textures.size(), defaultTexture);
+    std::vector<std::size_t> linearTextureMap(model.textures.size(), defaultMetallicRoughnessTexture);
     for (std::size_t textureIndex = 0; textureIndex < model.textures.size(); ++textureIndex)
     {
         const int sourceImage = model.textures[textureIndex].source;
         if (sourceImage >= 0 && static_cast<std::size_t>(sourceImage) < model.images.size())
         {
-            textureMap[textureIndex] = scene.AddTexture(ConvertImage(model.images[static_cast<std::size_t>(sourceImage)],
-                                                                     "GltfTexture" + std::to_string(textureIndex)));
+            srgbTextureMap[textureIndex] = scene.AddTexture(ConvertImage(model.images[static_cast<std::size_t>(sourceImage)],
+                                                                         "GltfSrgbTexture" + std::to_string(textureIndex),
+                                                                         true));
+            linearTextureMap[textureIndex] = scene.AddTexture(ConvertImage(model.images[static_cast<std::size_t>(sourceImage)],
+                                                                           "GltfLinearTexture" + std::to_string(textureIndex),
+                                                                           false));
         }
     }
 
@@ -335,9 +464,17 @@ scene::Scene GltfLoader::LoadStaticScene(const std::filesystem::path& path) cons
         material.metallic = static_cast<float>(source.pbrMetallicRoughness.metallicFactor);
         material.roughness = static_cast<float>(source.pbrMetallicRoughness.roughnessFactor);
         const int baseColorTexture = source.pbrMetallicRoughness.baseColorTexture.index;
-        material.baseColorTextureIndex = baseColorTexture >= 0 && static_cast<std::size_t>(baseColorTexture) < textureMap.size()
-                                             ? textureMap[static_cast<std::size_t>(baseColorTexture)]
+        material.baseColorTextureIndex = baseColorTexture >= 0 && static_cast<std::size_t>(baseColorTexture) < srgbTextureMap.size()
+                                             ? srgbTextureMap[static_cast<std::size_t>(baseColorTexture)]
                                              : defaultTexture;
+        const int metallicRoughnessTexture = source.pbrMetallicRoughness.metallicRoughnessTexture.index;
+        material.metallicRoughnessTextureIndex = metallicRoughnessTexture >= 0 && static_cast<std::size_t>(metallicRoughnessTexture) < linearTextureMap.size()
+                                                     ? linearTextureMap[static_cast<std::size_t>(metallicRoughnessTexture)]
+                                                     : defaultMetallicRoughnessTexture;
+        const int normalTexture = source.normalTexture.index;
+        material.normalTextureIndex = normalTexture >= 0 && static_cast<std::size_t>(normalTexture) < linearTextureMap.size()
+                                          ? linearTextureMap[static_cast<std::size_t>(normalTexture)]
+                                          : defaultNormalTexture;
         materialMap[materialIndex] = scene.AddMaterial(std::move(material));
     }
 
@@ -375,6 +512,13 @@ scene::Scene GltfLoader::LoadStaticScene(const std::filesystem::path& path) cons
                 texCoords = ReadVec2Accessor(model, texCoordAttribute->second);
             }
 
+            std::vector<glm::vec4> tangents;
+            const auto tangentAttribute = primitive.attributes.find("TANGENT");
+            if (tangentAttribute != primitive.attributes.end())
+            {
+                tangents = ReadVec4Accessor(model, tangentAttribute->second);
+            }
+
             scene::Mesh mesh;
             mesh.name = sourceMesh.name.empty()
                             ? "GltfMesh" + std::to_string(meshIndex) + "_Primitive" + std::to_string(primitiveIndex)
@@ -394,9 +538,18 @@ scene::Scene GltfLoader::LoadStaticScene(const std::filesystem::path& path) cons
                 {
                     mesh.vertices[vertexIndex].texCoord = texCoords[vertexIndex];
                 }
+                if (vertexIndex < tangents.size())
+                {
+                    mesh.vertices[vertexIndex].tangent = tangents[vertexIndex];
+                }
+                else
+                {
+                    mesh.vertices[vertexIndex].tangent = glm::vec4{0.0f};
+                }
             }
             mesh.indices = ReadIndexAccessor(model, primitive.indices, mesh.vertices.size());
             GenerateNormalsIfMissing(mesh);
+            GenerateTangentsIfMissing(mesh);
 
             const std::size_t sceneMeshIndex = scene.AddMesh(std::move(mesh));
             primitiveMeshesByGltfMesh[meshIndex].push_back(sceneMeshIndex);

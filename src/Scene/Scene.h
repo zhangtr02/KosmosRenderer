@@ -7,6 +7,7 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
 
 #include <string>
 #include <vector>
@@ -42,6 +43,8 @@ struct Material
     float metallic = 0.0f;
     float roughness = 0.5f;
     std::size_t baseColorTextureIndex = 0;
+    std::size_t metallicRoughnessTextureIndex = 0;
+    std::size_t normalTextureIndex = 0;
 };
 
 struct TextureData
@@ -49,6 +52,7 @@ struct TextureData
     std::string name = "WhiteTexture";
     std::uint32_t width = 1;
     std::uint32_t height = 1;
+    bool srgb = true;
     std::vector<std::uint8_t> rgbaPixels{255, 255, 255, 255};
 };
 
@@ -57,6 +61,7 @@ struct Vertex
     glm::vec3 position{};
     glm::vec3 normal{0.0f, 1.0f, 0.0f};
     glm::vec2 texCoord{};
+    glm::vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f};
 };
 
 struct Mesh

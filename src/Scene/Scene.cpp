@@ -15,12 +15,31 @@ TextureData CreateCheckerTexture()
     texture.name = "DemoChecker";
     texture.width = 2;
     texture.height = 2;
+    texture.srgb = true;
     texture.rgbaPixels = {
         235, 238, 245, 255,
         80, 92, 112, 255,
         80, 92, 112, 255,
         235, 238, 245, 255,
     };
+    return texture;
+}
+
+TextureData CreateDefaultMetallicRoughnessTexture()
+{
+    TextureData texture;
+    texture.name = "DefaultMetallicRoughness";
+    texture.srgb = false;
+    texture.rgbaPixels = {255, 255, 255, 255};
+    return texture;
+}
+
+TextureData CreateDefaultNormalTexture()
+{
+    TextureData texture;
+    texture.name = "DefaultNormal";
+    texture.srgb = false;
+    texture.rgbaPixels = {128, 128, 255, 255};
     return texture;
 }
 
@@ -75,9 +94,29 @@ Scene Scene::CreateDemoScene()
 {
     Scene scene;
     const std::size_t checkerTexture = scene.AddTexture(CreateCheckerTexture());
-    const std::size_t darkMaterial = scene.AddMaterial(Material{"BrushedDarkMetal", Color{0.45f, 0.48f, 0.52f, 1.0f}, 0.8f, 0.34f, checkerTexture});
-    const std::size_t ceramicMaterial = scene.AddMaterial(Material{"WarmCeramic", Color{0.85f, 0.72f, 0.58f, 1.0f}, 0.0f, 0.62f, checkerTexture});
-    const std::size_t floorMaterial = scene.AddMaterial(Material{"MatteFloor", Color{0.28f, 0.32f, 0.36f, 1.0f}, 0.0f, 0.85f, checkerTexture});
+    const std::size_t defaultMetallicRoughnessTexture = scene.AddTexture(CreateDefaultMetallicRoughnessTexture());
+    const std::size_t defaultNormalTexture = scene.AddTexture(CreateDefaultNormalTexture());
+    const std::size_t darkMaterial = scene.AddMaterial(Material{"BrushedDarkMetal",
+                                                                Color{0.45f, 0.48f, 0.52f, 1.0f},
+                                                                0.8f,
+                                                                0.34f,
+                                                                checkerTexture,
+                                                                defaultMetallicRoughnessTexture,
+                                                                defaultNormalTexture});
+    const std::size_t ceramicMaterial = scene.AddMaterial(Material{"WarmCeramic",
+                                                                   Color{0.85f, 0.72f, 0.58f, 1.0f},
+                                                                   0.0f,
+                                                                   0.62f,
+                                                                   checkerTexture,
+                                                                   defaultMetallicRoughnessTexture,
+                                                                   defaultNormalTexture});
+    const std::size_t floorMaterial = scene.AddMaterial(Material{"MatteFloor",
+                                                                 Color{0.28f, 0.32f, 0.36f, 1.0f},
+                                                                 0.0f,
+                                                                 0.85f,
+                                                                 checkerTexture,
+                                                                 defaultMetallicRoughnessTexture,
+                                                                 defaultNormalTexture});
 
     const std::size_t darkCube = scene.AddMesh(CreateCubeMesh(darkMaterial));
     const std::size_t ceramicCube = scene.AddMesh(CreateCubeMesh(ceramicMaterial));

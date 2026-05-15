@@ -62,6 +62,10 @@ private:
         VkDeviceMemory imageMemory = VK_NULL_HANDLE;
         VkImageView imageView = VK_NULL_HANDLE;
         VkSampler sampler = VK_NULL_HANDLE;
+    };
+
+    struct GpuMaterial
+    {
         VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
     };
 
@@ -165,6 +169,7 @@ private:
     VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
     std::vector<GpuMesh> gpuMeshes_;
     std::vector<GpuTexture> gpuTextures_;
+    std::vector<GpuMaterial> gpuMaterials_;
     const scene::Scene* uploadedScene_ = nullptr;
     std::size_t uploadedSceneResourceVersion_ = static_cast<std::size_t>(-1);
 

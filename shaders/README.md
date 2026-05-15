@@ -4,8 +4,8 @@
 
 当前已有：
 
-- `mesh.vert.hlsl`：读取 vertex buffer 中的位置和颜色，并通过 push constant 中的 MVP 矩阵和材质颜色输出裁剪空间位置。
-- `mesh.frag.hlsl`：输出插值后的顶点颜色。
+- `mesh.vert.hlsl`：读取 vertex buffer 中的位置、法线和 UV，通过 push constant 中的 MVP、材质颜色和光照方向输出裁剪空间位置与基础光照。
+- `mesh.frag.hlsl`：通过 descriptor set 采样 base color texture，并输出贴图、材质色和光照相乘后的颜色。
 
 CMake 配置时会查找 Vulkan SDK 自带的 `dxc`，构建前自动把 HLSL 编译成面向 Vulkan 1.3 的 SPIR-V：
 

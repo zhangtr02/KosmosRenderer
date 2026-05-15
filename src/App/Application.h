@@ -7,6 +7,7 @@
 #include "Scene/Scene.h"
 
 #include <memory>
+#include <filesystem>
 #include <string>
 
 namespace kosmos::app
@@ -17,6 +18,7 @@ struct ApplicationConfig
     int width = 1280;
     int height = 720;
     unsigned int maxFrames = 0;
+    std::filesystem::path scenePath;
 };
 
 class Application

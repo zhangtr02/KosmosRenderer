@@ -15,6 +15,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
+find_package(Stb REQUIRED)
+find_path(TINYGLTF_INCLUDE_DIRS "tiny_gltf.h" REQUIRED)
 
 find_program(DXC_EXECUTABLE
     NAMES dxc dxc.exe
@@ -68,6 +70,8 @@ add_dependencies(KosmosRenderer KosmosRendererShaders)
 target_include_directories(KosmosRenderer
     PRIVATE
         src
+        ${Stb_INCLUDE_DIR}
+        ${TINYGLTF_INCLUDE_DIRS}
 )
 
 target_link_libraries(KosmosRenderer

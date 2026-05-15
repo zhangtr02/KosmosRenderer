@@ -11,8 +11,10 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 - Vulkan instance、debug messenger、physical device、logical device 初始化。
 - Swapchain、image view、depth image、dynamic rendering pipeline 创建与 resize 重建。
 - Command buffer、semaphore、fence 基础同步流程。
-- 使用 staging buffer 上传 vertex buffer / index buffer，并通过 push constant 绘制多个彩色 cube。
-- 每个 cube 从 `Scene` 读取独立 transform 和材质颜色。
+- 使用 staging buffer 上传 mesh vertex buffer / index buffer。
+- 支持 glTF / GLB 静态模型加载：mesh、node transform、baseColorFactor、baseColorTexture。
+- 支持 Vulkan descriptor set 绑定 sampled image 和 sampler。
+- shader 支持基础贴图采样和简单 directional light。
 - 简单 `Renderer` 接口，预留未来接入 KosmosEngine 的边界。
 - 基础 `Scene` / `Camera` 数据结构和 fly camera 控制。
 
@@ -30,6 +32,8 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 ```powershell
 .\vcpkg.exe install glfw3:x64-windows
 .\vcpkg.exe install glm:x64-windows
+.\vcpkg.exe install tinygltf:x64-windows
+.\vcpkg.exe install stb:x64-windows
 ```
 
 shader 编译依赖 Vulkan SDK 自带的 `dxc`。
@@ -59,12 +63,19 @@ cmake --build build --config Debug
 .\build\Debug\KosmosRenderer.exe --frames 3
 ```
 
+加载项目内置 glTF 样例：
+
+```powershell
+.\build\Debug\KosmosRenderer.exe --scene assets\Phase3Quad.gltf
+```
+
 可选启动参数：
 
 ```text
 --width 1280
 --height 720
 --frames 3
+--scene assets\Phase3Quad.gltf
 ```
 
 ## 操作

@@ -2,6 +2,10 @@
 
 #include "Scene/Camera.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <glm/mat4x4.hpp>
+#include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
 #include <string>
@@ -37,13 +41,39 @@ struct Material
     Color baseColor{0.8f, 0.8f, 0.8f, 1.0f};
     float metallic = 0.0f;
     float roughness = 0.5f;
+    std::size_t baseColorTextureIndex = 0;
+};
+
+struct TextureData
+{
+    std::string name = "WhiteTexture";
+    std::uint32_t width = 1;
+    std::uint32_t height = 1;
+    std::vector<std::uint8_t> rgbaPixels{255, 255, 255, 255};
+};
+
+struct Vertex
+{
+    glm::vec3 position{};
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};
+    glm::vec2 texCoord{};
+};
+
+struct Mesh
+{
+    std::string name = "Mesh";
+    std::vector<Vertex> vertices;
+    std::vector<std::uint32_t> indices;
+    std::size_t materialIndex = 0;
 };
 
 struct MeshInstance
 {
     std::string name;
+    std::size_t meshIndex = 0;
     Transform transform{};
-    Material material{};
+    glm::mat4 worldTransform{1.0f};
+    bool useWorldTransform = false;
 };
 
 class Scene
@@ -53,17 +83,33 @@ public:
 
     void Update(float deltaSeconds);
 
+    std::size_t AddTexture(TextureData texture);
+    std::size_t AddMaterial(Material material);
+    std::size_t AddMesh(Mesh mesh);
+    void AddMeshInstance(MeshInstance instance);
+
     Camera& GetCamera() { return camera_; }
     const Camera& GetCamera() const { return camera_; }
     const Color& GetClearColor() const { return clearColor_; }
     const DirectionalLight& GetDirectionalLight() const { return directionalLight_; }
+    const std::vector<TextureData>& GetTextures() const { return textures_; }
+    const std::vector<Material>& GetMaterials() const { return materials_; }
+    const std::vector<Mesh>& GetMeshes() const { return meshes_; }
     const std::vector<MeshInstance>& GetMeshInstances() const { return meshInstances_; }
+    std::size_t GetResourceVersion() const { return resourceVersion_; }
 
 private:
+    void MarkResourcesDirty();
+
     Camera camera_{};
     Color clearColor_{0.015f, 0.025f, 0.045f, 1.0f};
     DirectionalLight directionalLight_{};
+    std::vector<TextureData> textures_;
+    std::vector<Material> materials_;
+    std::vector<Mesh> meshes_;
     std::vector<MeshInstance> meshInstances_;
     float elapsedSeconds_ = 0.0f;
+    std::size_t resourceVersion_ = 0;
+    bool animateDemo_ = false;
 };
 }

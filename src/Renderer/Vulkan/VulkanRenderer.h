@@ -3,6 +3,7 @@
 #include "Renderer/Renderer.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -45,6 +46,25 @@ private:
         std::vector<VkPresentModeKHR> presentModes;
     };
 
+    struct GpuMesh
+    {
+        VkBuffer vertexBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory vertexBufferMemory = VK_NULL_HANDLE;
+        VkBuffer indexBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory indexBufferMemory = VK_NULL_HANDLE;
+        std::uint32_t indexCount = 0;
+        std::size_t materialIndex = 0;
+    };
+
+    struct GpuTexture
+    {
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory imageMemory = VK_NULL_HANDLE;
+        VkImageView imageView = VK_NULL_HANDLE;
+        VkSampler sampler = VK_NULL_HANDLE;
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    };
+
     void CreateInstance();
     void SetupDebugMessenger();
     void PickPhysicalDevice();
@@ -52,28 +72,36 @@ private:
     void CreateSwapchain();
     void CreateImageViews();
     void CreateDepthResources();
+    void CreateDescriptorSetLayout();
     void CreateGraphicsPipeline();
-    void CreateMeshBuffers();
     void CreateCommandPool();
     void CreateCommandBuffers();
     void CreateSyncObjects();
     void CreateSwapchainSyncObjects();
 
     void CleanupGraphicsPipeline();
-    void CleanupMeshBuffers();
+    void CleanupSceneResources();
+    void CleanupDescriptorSetLayout();
     void CleanupDepthResources();
     void CleanupSwapchainSyncObjects();
     void CleanupSwapchain();
     void RecreateSwapchain();
-    void RecordCubePass(VkCommandBuffer commandBuffer,
-                        std::uint32_t imageIndex,
-                        const scene::Scene& scene,
-                        VkClearColorValue clearColor);
+    void UploadSceneResources(const scene::Scene& scene);
+    void RecordScenePass(VkCommandBuffer commandBuffer,
+                         std::uint32_t imageIndex,
+                         const scene::Scene& scene,
+                         VkClearColorValue clearColor);
     void TransitionSwapchainImageLayout(VkCommandBuffer commandBuffer, std::uint32_t imageIndex, VkImageLayout newLayout);
     void TransitionDepthImageLayout(VkCommandBuffer commandBuffer, VkImageLayout newLayout);
+    void TransitionImageLayout(VkCommandBuffer commandBuffer,
+                               VkImage image,
+                               VkImageLayout oldLayout,
+                               VkImageLayout newLayout,
+                               VkImageAspectFlags aspectMask) const;
     VkCommandBuffer BeginSingleTimeCommands() const;
     void EndSingleTimeCommands(VkCommandBuffer commandBuffer) const;
     void CopyBuffer(VkBuffer sourceBuffer, VkBuffer destinationBuffer, VkDeviceSize size) const;
+    void CopyBufferToImage(VkBuffer sourceBuffer, VkImage destinationImage, std::uint32_t width, std::uint32_t height) const;
 
     VkShaderModule CreateShaderModule(const std::vector<std::uint32_t>& code) const;
     void CreateBuffer(VkDeviceSize size,
@@ -122,6 +150,7 @@ private:
     std::vector<VkImageLayout> swapchainImageLayouts_;
     VkFormat swapchainImageFormat_ = VK_FORMAT_UNDEFINED;
     VkExtent2D swapchainExtent_{};
+    VkDescriptorSetLayout materialDescriptorSetLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
 
@@ -131,14 +160,13 @@ private:
     VkImageView depthImageView_ = VK_NULL_HANDLE;
     VkImageLayout depthImageLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    VkBuffer vertexBuffer_ = VK_NULL_HANDLE;
-    VkDeviceMemory vertexBufferMemory_ = VK_NULL_HANDLE;
-    VkBuffer indexBuffer_ = VK_NULL_HANDLE;
-    VkDeviceMemory indexBufferMemory_ = VK_NULL_HANDLE;
-    std::uint32_t indexCount_ = 0;
-
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;
+    VkDescriptorPool descriptorPool_ = VK_NULL_HANDLE;
+    std::vector<GpuMesh> gpuMeshes_;
+    std::vector<GpuTexture> gpuTextures_;
+    const scene::Scene* uploadedScene_ = nullptr;
+    std::size_t uploadedSceneResourceVersion_ = static_cast<std::size_t>(-1);
 
     static constexpr std::size_t MaxFramesInFlight = 2;
     std::array<VkSemaphore, MaxFramesInFlight> imageAvailableSemaphores_{};

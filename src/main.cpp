@@ -26,6 +26,10 @@ kosmos::app::ApplicationConfig ParseApplicationConfig(int argc, char** argv)
         {
             config.height = static_cast<int>(std::strtol(argv[++i], nullptr, 10));
         }
+        else if (argument == "--scene" && i + 1 < argc)
+        {
+            config.scenePath = argv[++i];
+        }
     }
 
     return config;

@@ -1,5 +1,6 @@
 #include "App/Application.h"
 
+#include "Assets/GltfLoader.h"
 #include "Renderer/Renderer.h"
 
 #include <iostream>
@@ -52,7 +53,14 @@ void Application::Initialize()
     }
 
     window_.Initialize(config_.width, config_.height, config_.title);
-    scene_ = scene::Scene::CreateDemoScene();
+    if (!config_.scenePath.empty())
+    {
+        scene_ = assets::GltfLoader{}.LoadStaticScene(config_.scenePath);
+    }
+    else
+    {
+        scene_ = scene::Scene::CreateDemoScene();
+    }
 
     renderer::RendererConfig rendererConfig;
     rendererConfig.applicationName = config_.title;

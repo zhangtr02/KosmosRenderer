@@ -72,6 +72,14 @@ private:
         VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
     };
 
+    struct FrameRenderContext
+    {
+        VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+        std::uint32_t swapchainImageIndex = 0;
+        VkClearColorValue clearColor{};
+        glm::mat4 lightViewProjection{1.0f};
+    };
+
     void CreateInstance();
     void SetupDebugMessenger();
     void PickPhysicalDevice();
@@ -108,14 +116,12 @@ private:
     void ShutdownImGui();
     void RecreateSwapchain();
     void UploadSceneResources(const scene::Scene& scene);
-    void RecordScenePass(VkCommandBuffer commandBuffer,
-                         const scene::Scene& scene,
-                         VkClearColorValue clearColor,
-                         const glm::mat4& lightViewProjection);
-    void RecordShadowPass(VkCommandBuffer commandBuffer,
-                          const scene::Scene& scene,
-                          const glm::mat4& lightViewProjection);
-    void RecordFinalPass(VkCommandBuffer commandBuffer, std::uint32_t imageIndex);
+    FrameRenderContext BuildFrameRenderContext(const scene::Scene& scene) const;
+    void RecordRenderGraph(const scene::Scene& scene);
+    void RecordShadowPass(const FrameRenderContext& context, const scene::Scene& scene);
+    void RecordForwardPass(const FrameRenderContext& context, const scene::Scene& scene);
+    void RecordPostProcessPass(const FrameRenderContext& context);
+    void RecordUiPass(VkCommandBuffer commandBuffer);
     void BuildDebugUi();
     void TransitionSwapchainImageLayout(VkCommandBuffer commandBuffer, std::uint32_t imageIndex, VkImageLayout newLayout);
     void TransitionDepthImageLayout(VkCommandBuffer commandBuffer, VkImageLayout newLayout);

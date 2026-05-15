@@ -402,19 +402,9 @@ void VulkanRenderer::RenderScene(const scene::Scene& scene)
         return;
     }
 
-    const auto clearColor = scene.GetClearColor();
-    VkClearColorValue vkClearColor{};
-    vkClearColor.float32[0] = clearColor.r;
-    vkClearColor.float32[1] = clearColor.g;
-    vkClearColor.float32[2] = clearColor.b;
-    vkClearColor.float32[3] = clearColor.a;
-
-    const glm::mat4 lightViewProjection = BuildLightViewProjection(scene.GetDirectionalLight());
     UploadSceneResources(scene);
     BuildDebugUi();
-    RecordShadowPass(commandBuffers_[currentFrame_], scene, lightViewProjection);
-    RecordScenePass(commandBuffers_[currentFrame_], scene, vkClearColor, lightViewProjection);
-    RecordFinalPass(commandBuffers_[currentFrame_], currentImageIndex_);
+    RecordRenderGraph(scene);
     clearRecorded_ = true;
 }
 
@@ -427,18 +417,10 @@ void VulkanRenderer::EndFrame()
 
     if (!clearRecorded_)
     {
-        VkClearColorValue fallbackClear{};
-        fallbackClear.float32[0] = 0.02f;
-        fallbackClear.float32[1] = 0.03f;
-        fallbackClear.float32[2] = 0.05f;
-        fallbackClear.float32[3] = 1.0f;
         const scene::Scene fallbackScene = scene::Scene::CreateDemoScene();
-        const glm::mat4 lightViewProjection = BuildLightViewProjection(fallbackScene.GetDirectionalLight());
         UploadSceneResources(fallbackScene);
         BuildDebugUi();
-        RecordShadowPass(commandBuffers_[currentFrame_], fallbackScene, lightViewProjection);
-        RecordScenePass(commandBuffers_[currentFrame_], fallbackScene, fallbackClear, lightViewProjection);
-        RecordFinalPass(commandBuffers_[currentFrame_], currentImageIndex_);
+        RecordRenderGraph(fallbackScene);
     }
 
     if (gpuTimestampsSupported_)
@@ -1967,10 +1949,38 @@ void VulkanRenderer::UploadSceneResources(const scene::Scene& scene)
     uploadedSceneResourceVersion_ = scene.GetResourceVersion();
 }
 
-void VulkanRenderer::RecordShadowPass(VkCommandBuffer commandBuffer,
-                                      const scene::Scene& scene,
-                                      const glm::mat4& lightViewProjection)
+VulkanRenderer::FrameRenderContext VulkanRenderer::BuildFrameRenderContext(const scene::Scene& scene) const
 {
+    const auto clearColor = scene.GetClearColor();
+    VkClearColorValue vkClearColor{};
+    vkClearColor.float32[0] = clearColor.r;
+    vkClearColor.float32[1] = clearColor.g;
+    vkClearColor.float32[2] = clearColor.b;
+    vkClearColor.float32[3] = clearColor.a;
+
+    FrameRenderContext context{};
+    context.commandBuffer = commandBuffers_[currentFrame_];
+    context.swapchainImageIndex = currentImageIndex_;
+    context.clearColor = vkClearColor;
+    context.lightViewProjection = BuildLightViewProjection(scene.GetDirectionalLight());
+    return context;
+}
+
+void VulkanRenderer::RecordRenderGraph(const scene::Scene& scene)
+{
+    const FrameRenderContext context = BuildFrameRenderContext(scene);
+
+    // Keep the pass order in one place so a real render graph can replace it later.
+    RecordShadowPass(context, scene);
+    RecordForwardPass(context, scene);
+    RecordPostProcessPass(context);
+}
+
+void VulkanRenderer::RecordShadowPass(const FrameRenderContext& context, const scene::Scene& scene)
+{
+    VkCommandBuffer commandBuffer = context.commandBuffer;
+    const glm::mat4& lightViewProjection = context.lightViewProjection;
+
     TransitionShadowImageLayout(commandBuffer, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
     VkRenderingAttachmentInfo depthAttachment{};
@@ -2045,11 +2055,12 @@ void VulkanRenderer::RecordShadowPass(VkCommandBuffer commandBuffer,
     TransitionShadowImageLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
-void VulkanRenderer::RecordScenePass(VkCommandBuffer commandBuffer,
-                                     const scene::Scene& scene,
-                                     VkClearColorValue clearColor,
-                                     const glm::mat4& lightViewProjection)
+void VulkanRenderer::RecordForwardPass(const FrameRenderContext& context, const scene::Scene& scene)
 {
+    VkCommandBuffer commandBuffer = context.commandBuffer;
+    const VkClearColorValue clearColor = context.clearColor;
+    const glm::mat4& lightViewProjection = context.lightViewProjection;
+
     VkClearValue clearValue{};
     clearValue.color = clearColor;
 
@@ -2177,8 +2188,11 @@ void VulkanRenderer::RecordScenePass(VkCommandBuffer commandBuffer,
     TransitionSceneColorImageLayout(commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
-void VulkanRenderer::RecordFinalPass(VkCommandBuffer commandBuffer, std::uint32_t imageIndex)
+void VulkanRenderer::RecordPostProcessPass(const FrameRenderContext& context)
 {
+    VkCommandBuffer commandBuffer = context.commandBuffer;
+    const std::uint32_t imageIndex = context.swapchainImageIndex;
+
     TransitionSwapchainImageLayout(commandBuffer, imageIndex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
     VkClearValue clearValue{};
@@ -2240,13 +2254,18 @@ void VulkanRenderer::RecordFinalPass(VkCommandBuffer commandBuffer, std::uint32_
                        &pushConstants);
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
+    RecordUiPass(commandBuffer);
+
+    vkCmdEndRendering(commandBuffer);
+    TransitionSwapchainImageLayout(commandBuffer, imageIndex, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+}
+
+void VulkanRenderer::RecordUiPass(VkCommandBuffer commandBuffer)
+{
     if (imguiInitialized_)
     {
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
     }
-
-    vkCmdEndRendering(commandBuffer);
-    TransitionSwapchainImageLayout(commandBuffer, imageIndex, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 }
 
 void VulkanRenderer::BuildDebugUi()

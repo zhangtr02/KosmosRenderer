@@ -15,6 +15,16 @@ class Scene;
 
 namespace kosmos::renderer
 {
+enum class DebugRenderMode
+{
+    Lit = 0,
+    Albedo = 1,
+    Normal = 2,
+    Roughness = 3,
+    Metallic = 4,
+    Shadow = 5
+};
+
 struct RendererConfig
 {
     std::string applicationName = "KosmosRenderer";
@@ -33,6 +43,7 @@ public:
     virtual bool BeginFrame() = 0;
     virtual void RenderScene(const scene::Scene& scene) = 0;
     virtual void EndFrame() = 0;
+    virtual void SetDebugRenderMode(DebugRenderMode mode) = 0;
     virtual void WaitIdle() = 0;
     virtual void Shutdown() = 0;
 };

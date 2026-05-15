@@ -15,6 +15,8 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 - 支持 glTF / GLB 静态模型加载：mesh、node transform、baseColor、metallic-roughness、normal texture。
 - 支持 Vulkan descriptor set 按材质绑定 base color、metallic-roughness、normal 三张 sampled image 和 sampler。
 - shader 支持基础 metallic-roughness PBR、directional light 和 normal map。
+- 支持 directional light shadow map，并在主渲染 pass 中采样阴影。
+- 支持渲染调试模式：Lit、Albedo、Normal、Roughness、Metallic、Shadow。
 - 简单 `Renderer` 接口，预留未来接入 KosmosEngine 的边界。
 - 基础 `Scene` / `Camera` 数据结构和 fly camera 控制。
 
@@ -83,4 +85,10 @@ cmake --build build --config Debug
 - 按住鼠标右键：捕获鼠标并控制视角。
 - `W/A/S/D`：前后左右移动。
 - `Q/E`：下降 / 上升。
+- `1`：正常光照模式。
+- `2`：Albedo 调试模式。
+- `3`：Normal 调试模式。
+- `4`：Roughness 调试模式。
+- `5`：Metallic 调试模式。
+- `6`：Shadow 调试模式。
 - `Esc`：退出程序。

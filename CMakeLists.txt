@@ -50,6 +50,7 @@ endfunction()
 
 kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/mesh.vert.hlsl" vs_6_0 "mesh.vert.spv")
 kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/mesh.frag.hlsl" ps_6_0 "mesh.frag.spv")
+kosmos_compile_shader("${KOSMOS_SHADER_SOURCE_DIR}/shadow.vert.hlsl" vs_6_0 "shadow.vert.spv")
 
 add_executable(KosmosRenderer
     src/main.cpp

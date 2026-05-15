@@ -17,6 +17,12 @@ enum class Key
     D,
     Q,
     E,
+    Num1,
+    Num2,
+    Num3,
+    Num4,
+    Num5,
+    Num6,
     Escape
 };
 

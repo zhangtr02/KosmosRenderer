@@ -2,6 +2,7 @@ struct PushConstants
 {
     float4x4 mvp;
     float4x4 model;
+    float4x4 lightMvp;
     float4 baseColor;
     float4 lightDirectionIntensity;
     float4 cameraPositionMetallic;
@@ -27,6 +28,7 @@ struct VertexOutput
     [[vk::location(2)]] float3 worldNormal : NORMAL0;
     [[vk::location(3)]] float3 worldTangent : TANGENT0;
     [[vk::location(4)]] float3 worldBitangent : TEXCOORD2;
+    [[vk::location(5)]] float4 lightClipPosition : TEXCOORD3;
 };
 
 VertexOutput main(VertexInput input)
@@ -43,5 +45,6 @@ VertexOutput main(VertexInput input)
     output.worldNormal = worldNormal;
     output.worldTangent = worldTangent;
     output.worldBitangent = worldBitangent;
+    output.lightClipPosition = mul(constants.lightMvp, float4(input.position, 1.0));
     return output;
 }

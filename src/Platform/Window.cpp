@@ -167,6 +167,18 @@ int Window::ToGlfwKey(Key key)
         return GLFW_KEY_Q;
     case Key::E:
         return GLFW_KEY_E;
+    case Key::Num1:
+        return GLFW_KEY_1;
+    case Key::Num2:
+        return GLFW_KEY_2;
+    case Key::Num3:
+        return GLFW_KEY_3;
+    case Key::Num4:
+        return GLFW_KEY_4;
+    case Key::Num5:
+        return GLFW_KEY_5;
+    case Key::Num6:
+        return GLFW_KEY_6;
     case Key::Escape:
         return GLFW_KEY_ESCAPE;
     }

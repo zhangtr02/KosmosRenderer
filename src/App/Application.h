@@ -39,6 +39,7 @@ private:
     scene::Scene scene_;
     FlyCameraController cameraController_;
     std::unique_ptr<renderer::Renderer> renderer_;
+    renderer::DebugRenderMode debugRenderMode_ = renderer::DebugRenderMode::Lit;
     unsigned int renderedFrames_ = 0;
     bool initialized_ = false;
 };

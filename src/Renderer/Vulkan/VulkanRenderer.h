@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <vector>
 
+#include <glm/mat4x4.hpp>
 #include <vulkan/vulkan.h>
 
 namespace kosmos::renderer
@@ -25,6 +26,7 @@ public:
     bool BeginFrame() override;
     void RenderScene(const scene::Scene& scene) override;
     void EndFrame() override;
+    void SetDebugRenderMode(DebugRenderMode mode) override;
     void WaitIdle() override;
     void Shutdown() override;
 
@@ -76,8 +78,10 @@ private:
     void CreateSwapchain();
     void CreateImageViews();
     void CreateDepthResources();
+    void CreateShadowResources();
     void CreateDescriptorSetLayout();
     void CreateGraphicsPipeline();
+    void CreateShadowPipeline();
     void CreateCommandPool();
     void CreateCommandBuffers();
     void CreateSyncObjects();
@@ -87,6 +91,7 @@ private:
     void CleanupSceneResources();
     void CleanupDescriptorSetLayout();
     void CleanupDepthResources();
+    void CleanupShadowResources();
     void CleanupSwapchainSyncObjects();
     void CleanupSwapchain();
     void RecreateSwapchain();
@@ -94,9 +99,14 @@ private:
     void RecordScenePass(VkCommandBuffer commandBuffer,
                          std::uint32_t imageIndex,
                          const scene::Scene& scene,
-                         VkClearColorValue clearColor);
+                         VkClearColorValue clearColor,
+                         const glm::mat4& lightViewProjection);
+    void RecordShadowPass(VkCommandBuffer commandBuffer,
+                          const scene::Scene& scene,
+                          const glm::mat4& lightViewProjection);
     void TransitionSwapchainImageLayout(VkCommandBuffer commandBuffer, std::uint32_t imageIndex, VkImageLayout newLayout);
     void TransitionDepthImageLayout(VkCommandBuffer commandBuffer, VkImageLayout newLayout);
+    void TransitionShadowImageLayout(VkCommandBuffer commandBuffer, VkImageLayout newLayout);
     void TransitionImageLayout(VkCommandBuffer commandBuffer,
                                VkImage image,
                                VkImageLayout oldLayout,
@@ -139,6 +149,7 @@ private:
     bool validationEnabled_ = false;
     bool frameStarted_ = false;
     bool clearRecorded_ = false;
+    DebugRenderMode debugRenderMode_ = DebugRenderMode::Lit;
 
     VkInstance instance_ = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT debugMessenger_ = VK_NULL_HANDLE;
@@ -157,12 +168,21 @@ private:
     VkDescriptorSetLayout materialDescriptorSetLayout_ = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout_ = VK_NULL_HANDLE;
     VkPipeline graphicsPipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout shadowPipelineLayout_ = VK_NULL_HANDLE;
+    VkPipeline shadowPipeline_ = VK_NULL_HANDLE;
 
     VkFormat depthFormat_ = VK_FORMAT_D32_SFLOAT;
     VkImage depthImage_ = VK_NULL_HANDLE;
     VkDeviceMemory depthImageMemory_ = VK_NULL_HANDLE;
     VkImageView depthImageView_ = VK_NULL_HANDLE;
     VkImageLayout depthImageLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkExtent2D shadowExtent_{2048, 2048};
+    VkImage shadowImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory shadowImageMemory_ = VK_NULL_HANDLE;
+    VkImageView shadowImageView_ = VK_NULL_HANDLE;
+    VkSampler shadowSampler_ = VK_NULL_HANDLE;
+    VkImageLayout shadowImageLayout_ = VK_IMAGE_LAYOUT_UNDEFINED;
 
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> commandBuffers_;

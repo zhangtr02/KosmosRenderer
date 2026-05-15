@@ -2,11 +2,14 @@ Texture2D<float4> BaseColorTexture : register(t0, space0);
 Texture2D<float4> MetallicRoughnessTexture : register(t1, space0);
 Texture2D<float4> NormalTexture : register(t2, space0);
 SamplerState MaterialSampler : register(s3, space0);
+Texture2D<float> ShadowTexture : register(t4, space0);
+SamplerState ShadowSampler : register(s5, space0);
 
 struct PushConstants
 {
     float4x4 mvp;
     float4x4 model;
+    float4x4 lightMvp;
     float4 baseColor;
     float4 lightDirectionIntensity;
     float4 cameraPositionMetallic;
@@ -24,6 +27,7 @@ struct FragmentInput
     [[vk::location(2)]] float3 worldNormal : NORMAL0;
     [[vk::location(3)]] float3 worldTangent : TANGENT0;
     [[vk::location(4)]] float3 worldBitangent : TEXCOORD2;
+    [[vk::location(5)]] float4 lightClipPosition : TEXCOORD3;
 };
 
 static const float Pi = 3.14159265359;
@@ -53,6 +57,38 @@ float3 FresnelSchlick(float hDotV, float3 f0)
     return f0 + (1.0 - f0) * pow(saturate(1.0 - hDotV), 5.0);
 }
 
+float CalculateShadow(float4 lightClipPosition, float3 normal, float3 lightDirection)
+{
+    const float3 projected = lightClipPosition.xyz / lightClipPosition.w;
+    const float2 shadowUv = projected.xy * 0.5 + 0.5;
+    const float currentDepth = projected.z;
+
+    if (lightClipPosition.w <= 0.0 ||
+        shadowUv.x < 0.0 || shadowUv.x > 1.0 ||
+        shadowUv.y < 0.0 || shadowUv.y > 1.0 ||
+        currentDepth < 0.0 || currentDepth > 1.0)
+    {
+        return 0.0;
+    }
+
+    const float bias = max(0.0015 * (1.0 - dot(normal, lightDirection)), 0.0005);
+    float shadow = 0.0;
+    const float2 texelSize = 1.0 / float2(2048.0, 2048.0);
+
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+    {
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            const float closestDepth = ShadowTexture.Sample(ShadowSampler, shadowUv + float2(x, y) * texelSize);
+            shadow += currentDepth - bias > closestDepth ? 1.0 : 0.0;
+        }
+    }
+
+    return shadow / 9.0;
+}
+
 float4 main(FragmentInput input) : SV_Target0
 {
     const float4 baseColorSample = BaseColorTexture.Sample(MaterialSampler, input.texCoord);
@@ -67,7 +103,9 @@ float4 main(FragmentInput input) : SV_Target0
     const float3 albedo = baseColorSample.rgb * constants.baseColor.rgb;
     const float alpha = baseColorSample.a * constants.baseColor.a;
     const float metallic = saturate(constants.cameraPositionMetallic.w * metallicRoughnessSample.b);
-    const float roughness = clamp(constants.lightColorRoughness.w * metallicRoughnessSample.g, 0.04, 1.0);
+    const float debugMode = floor(constants.lightColorRoughness.w / 2.0);
+    const float roughnessFactor = constants.lightColorRoughness.w - debugMode * 2.0;
+    const float roughness = clamp(roughnessFactor * metallicRoughnessSample.g, 0.04, 1.0);
 
     const float3 viewDirection = normalize(constants.cameraPositionMetallic.xyz - input.worldPosition);
     const float3 lightDirection = normalize(-constants.lightDirectionIntensity.xyz);
@@ -78,6 +116,7 @@ float4 main(FragmentInput input) : SV_Target0
     const float nDotL = max(dot(normal, lightDirection), 0.0);
     const float nDotH = max(dot(normal, halfVector), 0.0);
     const float hDotV = max(dot(halfVector, viewDirection), 0.0);
+    const float shadow = CalculateShadow(input.lightClipPosition, normal, lightDirection);
 
     const float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
     const float3 fresnel = FresnelSchlick(hDotV, f0);
@@ -86,8 +125,30 @@ float4 main(FragmentInput input) : SV_Target0
     const float3 specular = (distribution * geometry * fresnel) / max(4.0 * nDotV * nDotL, 0.0001);
 
     const float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / Pi;
-    const float3 directLighting = (diffuse + specular) * radiance * nDotL;
+    const float3 directLighting = (diffuse + specular) * radiance * nDotL * (1.0 - shadow);
     const float3 ambient = albedo * 0.03;
+
+    if (debugMode == 1.0)
+    {
+        return float4(albedo, alpha);
+    }
+    if (debugMode == 2.0)
+    {
+        return float4(normal * 0.5 + 0.5, alpha);
+    }
+    if (debugMode == 3.0)
+    {
+        return float4(float3(roughness, roughness, roughness), alpha);
+    }
+    if (debugMode == 4.0)
+    {
+        return float4(float3(metallic, metallic, metallic), alpha);
+    }
+    if (debugMode == 5.0)
+    {
+        const float visibility = 1.0 - shadow;
+        return float4(float3(visibility, visibility, visibility), alpha);
+    }
 
     return float4(ambient + directLighting, alpha);
 }

@@ -82,7 +82,7 @@ cmake --build .\build --config Debug
 加载项目内置 glTF 展示场景：
 
 ```powershell
-.\build\Debug\KosmosRenderer.exe --scene assets\Phase3Quad.gltf
+.\build\Debug\KosmosRenderer.exe --scene assets\KosmosShowcase.gltf
 ```
 
 可选启动参数：
@@ -91,7 +91,7 @@ cmake --build .\build --config Debug
 --width 1280
 --height 720
 --frames 3
---scene assets\Phase3Quad.gltf
+--scene assets\KosmosShowcase.gltf
 ```
 
 ## 操作

@@ -1,6 +1,6 @@
 # KosmosRenderer
 
-KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本先做成独立桌面应用，用来练习游戏引擎渲染模块的基础结构，后续计划再抽出稳定接口接入 KosmosEngine。
+KosmosRenderer 是一个基于 Vulkan 的实时渲染器项目，目标是展示从底层图形 API 到渲染管线、资源管理、模型加载、PBR 光照和调试工具的完整实现。
 
 ## 当前功能
 
@@ -19,12 +19,12 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染学习项目。当前版本
 - 支持离屏 scene color、后处理 tone mapping / gamma correction。
 - 支持渲染调试模式：Lit、Albedo、Normal、Roughness、Metallic、Shadow。
 - Dear ImGui 调试面板：render mode、exposure、gamma、shadow map preview、CPU/GPU frame time。
-- 简单 `Renderer` 接口，预留未来接入 KosmosEngine 的边界。
+- 简单 `Renderer` 接口，用于隔离应用层和 Vulkan 渲染后端。
 - 基础 `Scene` / `Camera` 数据结构和 fly camera 控制。
 
 ## 架构概览
 
-当前代码按独立应用和未来引擎模块两层组织：
+当前代码按应用层、平台层、资产层、场景层和渲染层组织：
 
 ```text
 App / Platform
@@ -37,7 +37,7 @@ App / Platform
   -> Scene / Assets
 ```
 
-`Renderer` 对外只暴露初始化、resize、begin frame、render scene、end frame 和 shutdown 等最小接口。`VulkanRenderer` 内部负责 Vulkan 对象生命周期、swapchain 重建、GPU 资源上传和 pass 录制；未来接入 KosmosEngine 时，可以让引擎侧继续持有 `Scene` 数据，并通过这个接口提交给渲染模块。
+`Renderer` 对外只暴露初始化、resize、begin frame、render scene、end frame 和 shutdown 等最小接口。`VulkanRenderer` 内部负责 Vulkan 对象生命周期、swapchain 重建、GPU 资源上传和 pass 录制。
 
 ## 环境要求
 
@@ -48,7 +48,7 @@ App / Platform
 - 支持 Vulkan 1.3 dynamic rendering 的 GPU 与驱动
 - vcpkg
 
-安装依赖：
+在 vcpkg 根目录安装依赖：
 
 ```powershell
 .\vcpkg.exe install glfw3:x64-windows
@@ -72,16 +72,6 @@ cmake -S . -B build `
 cmake --build .\build --config Debug
 .\build\Debug\KosmosRenderer.exe
 ```
-
-运行路径取决于你使用的 CMake 生成器和构建目录：
-
-```powershell
-.\build\Debug\KosmosRenderer.exe          # Visual Studio 等多配置生成器
-.\build\KosmosRenderer.exe                # Ninja 等单配置生成器
-.\cmake-build-debug\KosmosRenderer.exe    # CLion 当前默认 debug 构建目录
-```
-
-下面的运行示例以 Visual Studio 生成器路径为例；如果你使用 CLion，把 exe 路径替换成 `.\cmake-build-debug\KosmosRenderer.exe` 即可。
 
 快速启动并自动退出：
 

@@ -19,7 +19,7 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染器项目，目标是展示
 - 支持离屏 scene color、后处理 tone mapping / gamma correction。
 - 支持渲染调试模式：Lit、Albedo、Normal、Roughness、Metallic、Shadow。
 - Dear ImGui 调试面板：render mode、exposure、gamma、shadow map preview、CPU/GPU frame time。
-- 简单 `Renderer` 接口，用于隔离应用层和 Vulkan 渲染后端。
+- `Renderer` 抽象层，用于隔离应用层和 Vulkan 渲染后端。
 - 基础 `Scene` / `Camera` 数据结构和 fly camera 控制。
 
 ## 架构概览
@@ -28,7 +28,7 @@ KosmosRenderer 是一个基于 Vulkan 的实时渲染器项目，目标是展示
 
 ```text
 App / Platform
-  -> Renderer 接口
+  -> Renderer
     -> VulkanRenderer
       -> ShadowPass
       -> ForwardPass
@@ -37,7 +37,7 @@ App / Platform
   -> Scene / Assets
 ```
 
-`Renderer` 对外只暴露初始化、resize、begin frame、render scene、end frame 和 shutdown 等最小接口。`VulkanRenderer` 内部负责 Vulkan 对象生命周期、swapchain 重建、GPU 资源上传和 pass 录制。
+`Renderer` 负责定义应用层调用渲染器的边界。`VulkanRenderer` 负责 Vulkan 对象生命周期、swapchain 重建、GPU 资源上传和 pass 录制。
 
 ## 环境要求
 
